@@ -6,7 +6,7 @@ IFS=$'\n\t'
 # Instalador ReycodeSSH
 # -----------------------
 # Reemplazar PANEL_ZIP_URL por la URL directa del zip del panel (dl=1 o link directo)
-PANEL_ZIP_URL="https://www.dropbox.com/scl/fi/vnmoive81mirjbmwt1vev/panel_web.zip"
+PANEL_ZIP_URL="https://github.com/RmXF/Dev/blob/main/panel_web_basic.zip"
 
 # Directorio de instalación
 PANEL_DIR="/var/www/reycodessh"
