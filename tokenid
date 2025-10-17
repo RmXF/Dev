@@ -270,6 +270,209 @@ else
 	echo -e "$bar1"
 fi
 }
+
+
+
+
+# ---------------------------
+# FUNCIONES PARA PANEL WEB
+# ---------------------------
+
+# URL donde el instalador descargará el ZIP del panel (reemplazar por tu ZIP final)
+PANEL_ZIP_URL="https://example.com/panel.zip"
+# Alternativa: repo git (si prefieres git clone)
+GIT_REPO=""
+
+# Comprueba si ejecuta como root
+_check_root_panel(){
+  if [ "$EUID" -ne 0 ]; then
+    echo -e "\e[31m[ERROR] Este instalador debe ejecutarse como root.\e[0m"
+    return 1
+  fi
+  return 0
+}
+
+# Crea archivo config.php con credenciales y puerto
+_write_config_php(){
+  local dir="$1"
+  local user="$2"
+  local pass="$3"
+  local port="$4"
+  cat > "$dir/config.php" <<EOF
+<?php
+// Configuración básica del Panel Token
+return [
+  'admin_user' => '${user}',
+  'admin_pass' => '${pass}',
+  'server_port' => '${port}',
+  'db_path' => __DIR__ . '/data/tokens.db',
+];
+EOF
+  chmod 640 "$dir/config.php"
+}
+
+# Instalador principal
+instalar_panel(){
+  clear
+  echo -e "\n${amarillo}== Instalador Panel Web Onlycode VPN ==${cierre}\n"
+
+  if ! _check_root_panel; then
+    echo "Salvando..."
+    return 1
+  fi
+
+  read -p "Usuario administrador [admin]: " PANEL_USER
+  PANEL_USER=${PANEL_USER:-admin}
+  read -s -p "Contraseña admin [admin123]: " PANEL_PASS
+  echo
+  PANEL_PASS=${PANEL_PASS:-admin123}
+  read -p "Puerto del panel [80]: " PANEL_PORT
+  PANEL_PORT=${PANEL_PORT:-80}
+
+  echo
+  echo -e "${amarillo}Instalando dependencias (apache2, php, sqlite)...${cierre}"
+  if [ -f /etc/debian_version ]; then
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get update -y
+    apt-get install -y apache2 php libapache2-mod-php php-sqlite3 unzip wget curl git
+  else
+    echo -e "${rojo}Sistema no soportado automáticamente. Solo Debian/Ubuntu están soportados por este instalador.${cierre}"
+    return 1
+  fi
+
+  PANEL_DIR="/var/www/tokenpanel"
+  mkdir -p "$PANEL_DIR"
+  chown -R www-data:www-data "$PANEL_DIR"
+  chmod -R 755 "$PANEL_DIR"
+
+  TMP_ZIP="/tmp/panel_token.zip"
+
+  # Intentar descargar ZIP desde URL
+  if [ -n "$PANEL_ZIP_URL" ] && [ "$PANEL_ZIP_URL" != "https://example.com/panel.zip" ]; then
+    echo -e "${amarillo}Descargando panel desde: $PANEL_ZIP_URL${cierre}"
+    if wget -q -O "$TMP_ZIP" "$PANEL_ZIP_URL"; then
+      echo -e "${verde}ZIP descargado correctamente.${cierre}"
+      unzip -o "$TMP_ZIP" -d "$PANEL_DIR" >/dev/null 2>&1 || true
+      rm -f "$TMP_ZIP"
+    else
+      echo -e "${rojo}No se pudo descargar el ZIP desde $PANEL_ZIP_URL${cierre}"
+    fi
+  fi
+
+  # Si no se descargó y hay repo git, intentar clonar
+  if [ -z "$(ls -A "$PANEL_DIR" 2>/dev/null)" ] && [ -n "$GIT_REPO" ]; then
+    echo -e "${amarillo}Intentando clonar desde git: $GIT_REPO${cierre}"
+    if git clone "$GIT_REPO" "$PANEL_DIR" >/dev/null 2>&1; then
+      echo -e "${verde}Repositorio clonado.${cierre}"
+    else
+      echo -e "${rojo}Error clonando repo.${cierre}"
+    fi
+  fi
+
+  # Si no hay archivos (fallback): crear una página básica y estructura
+  if [ -z "$(ls -A "$PANEL_DIR" 2>/dev/null)" ]; then
+    echo -e "${amarillo}No se encontró contenido del panel. Creando una plantilla básica por defecto...${cierre}"
+    mkdir -p "$PANEL_DIR/data"
+    cat > "$PANEL_DIR/index.php" <<'EOF'
+<?php
+$config = require __DIR__ . '/config.php';
+?>
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Onlycode VPN - Panel</title></head>
+<body style="font-family:Arial,Helvetica,sans-serif;background:#111;color:#eee;padding:20px;">
+  <h1>Onlycode VPN - Panel (Plantilla)</h1>
+  <p>El panel fue instalado correctamente pero no se encontró el ZIP real del panel.</p>
+  <p>Config Usuario: <strong><?php echo \$config['admin_user']; ?></strong></p>
+  <p>Use el repo/zip real para reemplazar los archivos en <code>/var/www/tokenpanel</code></p>
+</body>
+</html>
+EOF
+    touch "$PANEL_DIR/data/tokens.db"
+    chown -R www-data:www-data "$PANEL_DIR"
+  fi
+
+  # Escribir config.php con las credenciales y ruta db
+  mkdir -p "$PANEL_DIR/data"
+  _write_config_php "$PANEL_DIR" "$PANEL_USER" "$PANEL_PASS" "$PANEL_PORT"
+  chown -R www-data:www-data "$PANEL_DIR"
+  chmod -R 750 "$PANEL_DIR"
+
+  # Configurar Apache: puerto y VirtualHost
+  echo -e "${amarillo}Configurando Apache para servir el panel en el puerto $PANEL_PORT...${cierre}"
+
+  # Editar ports.conf para escuchar el nuevo puerto (si no está)
+  if ! grep -q "Listen $PANEL_PORT" /etc/apache2/ports.conf 2>/dev/null; then
+    echo "Listen $PANEL_PORT" >> /etc/apache2/ports.conf
+  fi
+
+  # Crear virtualhost
+  APACHE_CONF="/etc/apache2/sites-available/tokenpanel.conf"
+  cat > "$APACHE_CONF" <<EOF
+<VirtualHost *:$PANEL_PORT>
+    ServerAdmin webmaster@localhost
+    DocumentRoot $PANEL_DIR
+    <Directory $PANEL_DIR>
+        Options Indexes FollowSymLinks
+        AllowOverride All
+        Require all granted
+    </Directory>
+    ErrorLog \${APACHE_LOG_DIR}/tokenpanel_error.log
+    CustomLog \${APACHE_LOG_DIR}/tokenpanel_access.log combined
+</VirtualHost>
+EOF
+
+  a2ensite tokenpanel.conf >/dev/null 2>&1 || true
+  a2enmod rewrite >/dev/null 2>&1 || true
+
+  # Si puerto 80 y default site conflictúa, deshabilitar default site (opcional)
+  if [ "$PANEL_PORT" = "80" ]; then
+    a2dissite 000-default.conf >/dev/null 2>&1 || true
+  fi
+
+  systemctl reload apache2 >/dev/null 2>&1 || systemctl restart apache2 >/dev/null 2>&1
+
+  # Mostrar resultado final
+  IPADDR=$(wget -4qO- http://ipinfo.io/ip 2>/dev/null || echo "127.0.0.1")
+  if [ "$PANEL_PORT" = "80" ]; then
+    URL="http://$IPADDR/"
+  else
+    URL="http://$IPADDR:$PANEL_PORT/"
+  fi
+
+  echo -e "\n$bar1"
+  echo -e "${verde}✅ Panel Web instalado correctamente.${cierre}"
+  echo -e "${blanco}Acceso: ${amarillo}$URL${cierre}"
+  echo -e "${blanco}Usuario: ${verde}$PANEL_USER${cierre}"
+  echo -e "${blanco}Contraseña: ${verde}$PANEL_PASS${cierre}"
+  echo -e "$bar1"
+}
+
+# Sub-menú para habilitar panel
+habilitar_panel(){
+  while true; do
+    clear
+    echo -e "$bar3"
+    echo -e "${azul}[1]${cierre} ${rojo}>${cierre} ${blanco}Instalar Panel Web${cierre}"
+    echo -e "${azul}[0]${cierre} ${rojo}>${cierre} ${rojo}VOLVER${cierre}"
+    echo -e "$bar2"
+    read -p "$(echo -e "${blanco}seleccione [0-1]:${cierre}")" opt
+    case "$opt" in
+      1) instalar_panel; read -p "Presione ENTER para volver al menú..." dummy ;; 
+      0) break ;;
+      *) echo -e "${rojo}Opción inválida${cierre}"; sleep 1 ;;
+    esac
+  done
+}
+
+# ---------------------------
+# FIN FUNCIONES PANEL WEB
+# ---------------------------
+
+
+
+
+
 #EDITAR TOKEN
 editar (){
 unset token
@@ -462,7 +665,7 @@ ${azul}[4]${cierre} ${rojo}>${cierre} ${blanco}Lista de ${verde}ID${cierre}
 ${azul}[5]${cierre} ${rojo}>${cierre} ${blanco}Eliminar ${verde}ID ${blanco}Expirados${cierre}
 ${azul}[6]${cierre} ${rojo}>${cierre} ${blanco}Informacion de Clientes${cierre}
 ${azul}[7]${cierre} ${rojo}>${cierre} ${blanco}Token ${verdeR}Activos${cierre}
-echo "8) Habilitar Panel Web"
+${azul}[8]${cierre} ${rojo}>${cierre} ${blanco}Habilitar Panel Web${cierre}
 ${azul}[0]${cierre} ${rojo}>${cierre} ${rojo}SALIR${cierre}
 ${bar2}"
 read -p "$(echo -e "${blanco}seleccione [0-7]:${cierre}")" selection
@@ -474,7 +677,7 @@ case "$selection" in
   5)expirados ;;
   6)informacion_clientes;;
   7)online;;
-  8) instalar_panel_web ;;
+    8) instalar_panel_web ;;
 	0)cd $HOME && exit 0;;
 	*)
 	echo -e "${rojo} Porfavor seleccione del [0-5]${cierre}"
