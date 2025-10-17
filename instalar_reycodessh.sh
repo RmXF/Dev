@@ -249,4 +249,4 @@ main(){
   final_info
 }
 
-main "$@"
+main
