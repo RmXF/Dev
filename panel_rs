@@ -1,0 +1,348 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Instalador automático de Panel Web mínimo (Debian/Ubuntu)
+# - Instala Nginx, MariaDB, PHP-FPM
+# - Crea DB y usuario
+# - Despliega un panel PHP básico (login + dashboard)
+# - Crea admin y muestra credenciales al final
+# USO: ejecutar como root o con sudo
+
+# ---------- Configurables ----------
+WEB_ROOT="/var/www/panelbonv"
+SITE_DOMAIN="0.0.0.0"   # deja 0.0.0.0 si no tienes dominio, para escuchar en todas la IPs
+DB_NAME="panelbonv_db"
+DB_USER="panelbonv_user"
+NGINX_CONF="/etc/nginx/sites-available/panelbonv"
+FQDN="${SITE_DOMAIN}"
+# -----------------------------------
+
+info(){ echo -e "\e[1;34m[INFO]\e[0m $*"; }
+warn(){ echo -e "\e[1;33m[WARN]\e[0m $*"; }
+err(){ echo -e "\e[1;31m[ERROR]\e[0m $*" >&2; }
+
+if [ "$(id -u)" -ne 0 ]; then
+  err "Ejecuta el script como root o con sudo."
+  exit 1
+fi
+
+# Detect distro (apt-based)
+if ! command -v apt >/dev/null 2>&1; then
+  err "Este script está hecho para Debian/Ubuntu (apt)."
+  exit 1
+fi
+
+info "Actualizando repositorios..."
+apt update -y
+DEBIAN_FRONTEND=noninteractive apt upgrade -y
+
+info "Instalando paquetes requeridos (nginx, mariadb, php, git, unzip, ufw)..."
+DEBIAN_FRONTEND=noninteractive apt install -y nginx mariadb-server php-fpm php-mysql php-xml php-mbstring php-zip php-cli git unzip curl ufw
+
+info "Asegurando MariaDB (configuración básica no interactiva)..."
+# Intento de asegurar MariaDB de forma no interactiva: establecer contraseña temporal y remover anon users
+# Nota: en MariaDB 10+ el plugin auth_socket puede estar activo; si falla, lo ignoramos.
+MYSQL_ROOT_PASS="$(openssl rand -base64 12)"
+# Start mariadb if not running
+systemctl enable --now mariadb
+
+# crear DB y usuario para el panel
+DB_PASS="$(openssl rand -base64 16)"
+info "Creando base de datos y usuario..."
+mysql -e "CREATE DATABASE IF NOT EXISTS \`$DB_NAME\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
+mysql -e "CREATE USER IF NOT EXISTS '$DB_USER'@'localhost' IDENTIFIED BY '$DB_PASS';"
+mysql -e "GRANT ALL PRIVILEGES ON \`$DB_NAME\`.* TO '$DB_USER'@'localhost';"
+mysql -e "FLUSH PRIVILEGES;"
+
+info "Preparando directorio web: $WEB_ROOT"
+mkdir -p "$WEB_ROOT"
+chown -R www-data:www-data "$WEB_ROOT"
+chmod -R 755 "$WEB_ROOT"
+
+info "Desplegando archivos del panel (PHP simple)..."
+
+# Crear archivo de conexión a DB
+cat > "$WEB_ROOT/db.php" <<'PHP'
+<?php
+$DB_HOST = '127.0.0.1';
+$DB_NAME = getenv('PANEL_DB_NAME') ?: 'panelbonv_db';
+$DB_USER = getenv('PANEL_DB_USER') ?: 'panelbonv_user';
+$DB_PASS = getenv('PANEL_DB_PASS') ?: 'changeme';
+try {
+    $pdo = new PDO("mysql:host=$DB_HOST;dbname=$DB_NAME;charset=utf8mb4", $DB_USER, $DB_PASS, [
+        PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION
+    ]);
+} catch (Exception $e) {
+    die("DB error: " . $e->getMessage());
+}
+PHP
+
+# Crear tabla usuarios e insertar admin más adelante (script PHP que se ejecuta aquí)
+cat > "$WEB_ROOT/init_db.php" <<'PHP'
+<?php
+require 'db.php';
+$pdo->exec("CREATE TABLE IF NOT EXISTS users (
+ id INT AUTO_INCREMENT PRIMARY KEY,
+ username VARCHAR(100) UNIQUE NOT NULL,
+ password VARCHAR(255) NOT NULL,
+ fullname VARCHAR(255),
+ created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
+echo "OK\n";
+PHP
+
+# Página de login
+cat > "$WEB_ROOT/index.php" <<'PHP'
+<?php
+require 'db.php';
+session_start();
+$msg='';
+if ($_SERVER['REQUEST_METHOD']==='POST') {
+    $u = $_POST['username'] ?? '';
+    $p = $_POST['password'] ?? '';
+    $stmt = $pdo->prepare("SELECT * FROM users WHERE username = :u LIMIT 1");
+    $stmt->execute(['u'=>$u]);
+    $user = $stmt->fetch(PDO::FETCH_ASSOC);
+    if ($user && password_verify($p, $user['password'])) {
+        $_SESSION['user_id'] = $user['id'];
+        header('Location: dashboard.php');
+        exit;
+    } else {
+        $msg = 'Credenciales incorrectas';
+    }
+}
+?>
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Panel Bonv - Login</title>
+<style>
+body{font-family:Arial,Helvetica,sans-serif;background:#f5f7fb;display:flex;align-items:center;justify-content:center;height:100vh;}
+.card{background:white;padding:24px;border-radius:8px;box-shadow:0 6px 18px rgba(0,0,0,0.08);width:320px}
+input{width:100%;padding:10px;margin:8px 0;border:1px solid #ddd;border-radius:6px}
+button{width:100%;padding:10px;background:#2b6cb0;color:white;border:none;border-radius:6px}
+.msg{color:#b00020;margin-bottom:8px}
+</style>
+</head>
+<body>
+<div class="card">
+  <h3>Acceso al Panel</h3>
+  <?php if($msg): ?><div class="msg"><?=htmlspecialchars($msg)?></div><?php endif; ?>
+  <form method="post">
+    <input name="username" placeholder="Usuario" required>
+    <input name="password" placeholder="Contraseña" type="password" required>
+    <button type="submit">Entrar</button>
+  </form>
+</div>
+</body>
+</html>
+PHP
+
+# Dashboard sencillo
+cat > "$WEB_ROOT/dashboard.php" <<'PHP'
+<?php
+require 'db.php';
+session_start();
+if (!isset($_SESSION['user_id'])) {
+    header('Location: index.php');
+    exit;
+}
+$stmt = $pdo->prepare("SELECT username,fullname,created_at FROM users WHERE id = :id LIMIT 1");
+$stmt->execute(['id'=>$_SESSION['user_id']]);
+$user = $stmt->fetch(PDO::FETCH_ASSOC);
+?>
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Panel - Dashboard</title>
+<style>body{font-family:Arial,Helvetica,sans-serif;background:#f5f7fb;padding:20px} .card{background:white;padding:18px;border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,0.06)}</style>
+</head>
+<body>
+<div style="max-width:900px;margin:0 auto">
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+    <h2>Dashboard</h2>
+    <div><strong><?=htmlspecialchars($user['username'])?></strong> &nbsp; <a href="logout.php">Salir</a></div>
+  </div>
+
+  <div class="card">
+    <h3>Información del panel</h3>
+    <ul>
+      <li>Usuario: <?=htmlspecialchars($user['username'])?></li>
+      <li>Nombre: <?=htmlspecialchars($user['fullname'])?></li>
+      <li>Creado: <?=htmlspecialchars($user['created_at'])?></li>
+    </ul>
+  </div>
+
+  <div class="card" style="margin-top:12px">
+    <h3>Acciones rápidas</h3>
+    <p>Aquí puedes añadir integraciones: instalar OpenVPN, ver logs, crear usuarios, etc.</p>
+  </div>
+</div>
+</body>
+</html>
+PHP
+
+# logout
+cat > "$WEB_ROOT/logout.php" <<'PHP'
+<?php session_start(); session_unset(); session_destroy(); header('Location: index.php'); exit; ?>
+PHP
+
+# fichero README básico
+cat > "$WEB_ROOT/README.txt" <<TXT
+Panel Bonv - Instalado automáticamente
+Acceso: http://<IP_del_servidor>/ (o https si se configura)
+Usuario admin se muestra al final del script.
+TXT
+
+chown -R www-data:www-data "$WEB_ROOT"
+
+info "Creando configuración de Nginx..."
+cat > "$NGINX_CONF" <<NGINX
+server {
+    listen 80 default_server;
+    listen [::]:80 default_server;
+    server_name ${FQDN};
+
+    root ${WEB_ROOT};
+    index index.php index.html;
+
+    location / {
+        try_files \$uri \$uri/ /index.php?\$args;
+    }
+
+    location ~ \.php\$ {
+        fastcgi_pass unix:/run/php/php$(php -r 'echo PHP_MAJOR_VERSION.".".PHP_MINOR_VERSION;')-fpm.sock;
+        fastcgi_index index.php;
+        include fastcgi_params;
+        fastcgi_param SCRIPT_FILENAME \$document_root\$fastcgi_script_name;
+    }
+
+    location ~* \.(js|css|png|jpg|jpeg|gif|svg|ico)$ {
+        try_files \$uri =404;
+        expires 7d;
+        access_log off;
+    }
+}
+NGINX
+
+ln -sf "$NGINX_CONF" /etc/nginx/sites-enabled/panelbonv
+nginx -t
+systemctl restart nginx
+
+# Variables de entorno para db connection en PHP
+# Usamos file /etc/default/panelbonv para mantenerlas
+cat > /etc/default/panelbonv <<ENV
+PANEL_DB_NAME=$DB_NAME
+PANEL_DB_USER=$DB_USER
+PANEL_DB_PASS=$DB_PASS
+ENV
+
+# Exponer variables para php-fpm pool via env if desired (simple approach: put into db.php fallback already uses env)
+# Ejecutar init_db.php para crear tablas
+info "Inicializando esquema de base de datos..."
+# Export env so php can read it via getenv()
+export PANEL_DB_NAME="$DB_NAME"
+export PANEL_DB_USER="$DB_USER"
+export PANEL_DB_PASS="$DB_PASS"
+php "$WEB_ROOT/init_db.php" >/dev/null 2>&1 || true
+
+# Crear usuario admin
+ADMIN_USER="admin"
+# generar password aleatoria
+ADMIN_PASS="$(openssl rand -base64 12)"
+# hashear con password_hash usando php -r
+ADMIN_PASS_HASH=$(php -r "echo password_hash('$ADMIN_PASS', PASSWORD_BCRYPT);")
+
+# insertar si no existe
+mysql -e "INSERT IGNORE INTO \`$DB_NAME\`.users (username,password,fullname) VALUES ('$ADMIN_USER', '$ADMIN_PASS_HASH', 'Administrador');"
+
+# Ajustes de permisos
+chown -R www-data:www-data "$WEB_ROOT"
+chmod -R 755 "$WEB_ROOT"
+
+# Firewall: permitir HTTP/HTTPS/SSH
+info "Configurando UFW (firewall)..."
+ufw allow OpenSSH || true
+ufw allow 80/tcp || true
+ufw allow 443/tcp || true
+ufw --force enable || true
+
+# Crear certificado self-signed (si no hay letsencrypt)
+info "Generando certificado TLS auto-firmado (para uso inmediato)..."
+SSL_DIR="/etc/ssl/panelbonv"
+mkdir -p "$SSL_DIR"
+openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+  -keyout "$SSL_DIR/panel.key" -out "$SSL_DIR/panel.crt" \
+  -subj "/C=AR/ST=BuenosAires/L=BuenosAires/O=PanelBonv/OU=IT/CN=${FQDN}" >/dev/null 2>&1 || true
+
+# Añadir bloque HTTPS simple a nginx conf (append)
+cat >> "$NGINX_CONF" <<NGINX_SSL
+
+server {
+    listen 443 ssl default_server;
+    listen [::]:443 ssl default_server;
+    server_name ${FQDN};
+
+    ssl_certificate ${SSL_DIR}/panel.crt;
+    ssl_certificate_key ${SSL_DIR}/panel.key;
+
+    root ${WEB_ROOT};
+    index index.php index.html;
+
+    location / {
+        try_files \$uri \$uri/ /index.php?\$args;
+    }
+
+    location ~ \.php\$ {
+        fastcgi_pass unix:/run/php/php$(php -r 'echo PHP_MAJOR_VERSION.".".PHP_MINOR_VERSION;')-fpm.sock;
+        fastcgi_index index.php;
+        include fastcgi_params;
+        fastcgi_param SCRIPT_FILENAME \$document_root\$fastcgi_script_name;
+    }
+}
+NGINX_SSL
+
+nginx -t
+systemctl reload nginx
+
+# Guardar credenciales en /root/panel_credentials.txt
+CRED_FILE="/root/panel_credentials.txt"
+cat > "$CRED_FILE" <<CRED
+Panel instalado correctamente.
+
+Acceso HTTP: http://<IP_DEL_SERVIDOR>/
+Acceso HTTPS: https://<IP_DEL_SERVIDOR>/
+
+Admin user : $ADMIN_USER
+Admin pass : $ADMIN_PASS
+
+DB name  : $DB_NAME
+DB user  : $DB_USER
+DB pass  : $DB_PASS
+
+Web root : $WEB_ROOT
+Nginx conf: $NGINX_CONF
+
+Nota: el certificado TLS es autofirmado. Si tienes un dominio, instala certbot y solicita un certificado Let's Encrypt.
+CRED
+
+chmod 600 "$CRED_FILE"
+
+info "¡Instalación finalizada!"
+info "Credenciales guardadas en $CRED_FILE"
+echo
+echo "============================================"
+echo "Accede al panel:"
+echo "- HTTP  : http://<IP_del_servidor>/"
+echo "- HTTPS : https://<IP_del_servidor>/ (certificado autofirmado)"
+echo
+echo "Usuario admin: $ADMIN_USER"
+echo "Contraseña   : $ADMIN_PASS"
+echo
+echo "Detalles DB   : $DB_NAME / $DB_USER / (contraseña en $CRED_FILE)"
+echo "============================================"
+echo
+warn "IMPORTANTE: cambia la contraseña del admin y configura Let's Encrypt si vas a exponer esto en producción."
