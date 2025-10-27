@@ -2,70 +2,121 @@
 set -e
 
 
-# Variables (modificá según tu dominio y usuario)
-REPO_URL="https://github.com/usuario/node-admin-panel.git" # reemplazar por tu repo
-APP_DIR="/var/www/node-admin-panel"
+# CONFIGURACIONES - editá si necesitás
+APP_DIR="/var/www/panel"
 DOMAIN="panel.tusitio.com"
-ADMIN_EMAIL="admin@tusitio.com"
-ADMIN_PASS="Admin123!" # contraseña temporal, cambiar luego
-NODE_VERSION="lts/*"
+ADMIN_EMAIL="admin@example.com"
+ADMIN_PASS="admin123"
+USER_NAME="$SUDO_USER"
 
 
-echo "==> Actualizando paquetes"
+# Funciones
+function info(){ echo -e "
+==> $1"; }
+
+
+info "Actualizando sistema"
 apt update && apt upgrade -y
 
 
-echo "==> Instalar dependencias básicas"
-apt install -y curl git nginx build-essential
+info "Instalando dependencias básicas"
+apt install -y curl gnupg lsb-release ca-certificates build-essential git nginx
 
 
-# Instalar Node.js (Usando NodeSource)
+# INSTALAR NODEJS LTS
 if ! command -v node >/dev/null 2>&1; then
+info "Instalando Node.js LTS"
 curl -fsSL https://deb.nodesource.com/setup_lts.x | bash -
 apt install -y nodejs
 fi
 
 
-# Instalar MongoDB (community) - simplificado para Debian/Ubuntu
-if ! command -v mongod >/dev/null 2>&1; then
-apt install -y mongodb
-systemctl enable mongodb
-systemctl start mongodb
-fi
-
-
-# Crear usuario www-data (si no existe) y carpeta de la app
-mkdir -p "$APP_DIR"
-chown -R $USER:$USER "$APP_DIR"
-
-
-echo "==> Clonando repo en $APP_DIR"
-if [ -d "$APP_DIR/.git" ]; then
-cd "$APP_DIR" && git pull
+# INSTALAR MONGODB (repositorio oficial 6.0)
+if ! systemctl list-unit-files | grep -q mongod; then
+info "Instalando MongoDB 6.0 (repositorio oficial)"
+curl -fsSL https://pgp.mongodb.com/server-6.0.asc | gpg --dearmor -o /usr/share/keyrings/mongodb-server-6.0.gpg
+echo "deb [signed-by=/usr/share/keyrings/mongodb-server-6.0.gpg] https://repo.mongodb.org/apt/ubuntu $(lsb_release -cs)/mongodb-org/6.0 multiverse" | tee /etc/apt/sources.list.d/mongodb-org-6.0.list
+apt update
+apt install -y mongodb-org
+systemctl enable mongod
+systemctl start mongod
 else
-git clone "$REPO_URL" "$APP_DIR"
+info "MongoDB ya instalado"
 fi
 
 
+# Crear directorio de la app
+info "Creando carpeta $APP_DIR"
+mkdir -p "$APP_DIR"
+chown -R "$USER_NAME":"$USER_NAME" "$APP_DIR"
 cd "$APP_DIR"
 
 
-echo "==> Instalando dependencias npm"
-npm install --production
+# Crear archivos del proyecto
+info "Creando archivos del proyecto"
 
 
-# Copiar .env de ejemplo si no existe
-if [ ! -f .env ]; then
-cp .env.example .env
-sed -i "s|MONGO_URI=.*|MONGO_URI=mongodb://localhost:27017/node_admin_panel|" .env
-sed -i "s|JWT_SECRET=.*|JWT_SECRET=$(openssl rand -hex 16)|" .env
-sed -i "s|ADMIN_EMAIL=.*|ADMIN_EMAIL=$ADMIN_EMAIL|" .env
-sed -i "s|ADMIN_PASS=.*|ADMIN_PASS=$ADMIN_PASS|" .env
-fi
+cat > package.json <<'EOF'
+{
+"name": "node-admin-panel",
+"version": "1.0.0",
+"main": "app.js",
+"scripts": {
+"start": "node app.js"
+},
+"dependencies": {
+"bcrypt": "^5.1.0",
+"body-parser": "^1.20.0",
+"connect-mongo": "^5.0.0",
+"dotenv": "^16.0.0",
+"ejs": "^3.1.8",
+"express": "^4.18.2",
+"express-session": "^1.17.3",
+"mongoose": "^7.0.0"
+}
+}
+EOF
 
 
-# Crear administrador inicial
-node scripts/create_admin.js || true
+cat > .env.example <<'EOF'
+PORT=3000
+MONGO_URI=mongodb://localhost:27017/node_admin_panel
+SESSION_SECRET=change_this_session_secret
+ADMIN_EMAIL=admin@example.com
+ADMIN_PASS=admin123
+EOF
 
 
-# Instalar PM2 y arrancar la app
+cat > app.js <<'EOF'
+require('dotenv').config();
+const express = require('express');
+const session = require('express-session');
+const MongoStore = require('connect-mongo');
+const bodyParser = require('body-parser');
+const path = require('path');
+const mongoose = require('mongoose');
+
+
+const authRoutes = require('./routes/auth');
+const dashRoutes = require('./routes/dashboard');
+
+
+const app = express();
+const PORT = process.env.PORT || 3000;
+
+
+// View engine
+app.set('view engine', 'ejs');
+app.set('views', path.join(__dirname, 'views'));
+app.use('/public', express.static(path.join(__dirname, 'public')));
+app.use(bodyParser.urlencoded({ extended: true }));
+
+
+// DB
+mongoose.connect(process.env.MONGO_URI, { useNewUrlParser: true, useUnifiedTopology: true })
+.then(()=> console.log('MongoDB conectado'))
+.catch(err=> console.error('MongoDB error', err));
+
+
+// Session
+info "Instalación finalizada. Accedé a: http://$DOMAIN/login (usuario: $ADMIN_EMAIL | pass: $ADMIN_PASS)
