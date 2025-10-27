@@ -1,0 +1,71 @@
+#!/usr/bin/env bash
+set -e
+
+
+# Variables (modificá según tu dominio y usuario)
+REPO_URL="https://github.com/usuario/node-admin-panel.git" # reemplazar por tu repo
+APP_DIR="/var/www/node-admin-panel"
+DOMAIN="panel.tusitio.com"
+ADMIN_EMAIL="admin@tusitio.com"
+ADMIN_PASS="Admin123!" # contraseña temporal, cambiar luego
+NODE_VERSION="lts/*"
+
+
+echo "==> Actualizando paquetes"
+apt update && apt upgrade -y
+
+
+echo "==> Instalar dependencias básicas"
+apt install -y curl git nginx build-essential
+
+
+# Instalar Node.js (Usando NodeSource)
+if ! command -v node >/dev/null 2>&1; then
+curl -fsSL https://deb.nodesource.com/setup_lts.x | bash -
+apt install -y nodejs
+fi
+
+
+# Instalar MongoDB (community) - simplificado para Debian/Ubuntu
+if ! command -v mongod >/dev/null 2>&1; then
+apt install -y mongodb
+systemctl enable mongodb
+systemctl start mongodb
+fi
+
+
+# Crear usuario www-data (si no existe) y carpeta de la app
+mkdir -p "$APP_DIR"
+chown -R $USER:$USER "$APP_DIR"
+
+
+echo "==> Clonando repo en $APP_DIR"
+if [ -d "$APP_DIR/.git" ]; then
+cd "$APP_DIR" && git pull
+else
+git clone "$REPO_URL" "$APP_DIR"
+fi
+
+
+cd "$APP_DIR"
+
+
+echo "==> Instalando dependencias npm"
+npm install --production
+
+
+# Copiar .env de ejemplo si no existe
+if [ ! -f .env ]; then
+cp .env.example .env
+sed -i "s|MONGO_URI=.*|MONGO_URI=mongodb://localhost:27017/node_admin_panel|" .env
+sed -i "s|JWT_SECRET=.*|JWT_SECRET=$(openssl rand -hex 16)|" .env
+sed -i "s|ADMIN_EMAIL=.*|ADMIN_EMAIL=$ADMIN_EMAIL|" .env
+sed -i "s|ADMIN_PASS=.*|ADMIN_PASS=$ADMIN_PASS|" .env
+fi
+
+
+# Crear administrador inicial
+node scripts/create_admin.js || true
+
+
+# Instalar PM2 y arrancar la app
