@@ -1,0 +1,251 @@
+#!/bin/bash
+# Instalador automático del Panel Web - ReyCodeSSH
+# By GPT-5 | Versión Base con Login + Dashboard
+
+clear
+echo -e "\033[1;36m──────────────────────────────────────────────\033[0m"
+echo -e "     🚀 INSTALADOR PANEL WEB - ReyCodeSSH     "
+echo -e "\033[1;36m──────────────────────────────────────────────\033[0m"
+echo ""
+
+# Variables
+PANEL_DIR="/var/www/reycodessh"
+CONF_FILE="/etc/apache2/sites-available/reycodessh.conf"
+PORT=80
+USER="admin"
+PASS="admin123"
+
+# Instalar dependencias
+echo -e "\033[1;33m[+] Instalando dependencias...\033[0m"
+apt update -y >/dev/null 2>&1
+apt install apache2 php libapache2-mod-php unzip -y >/dev/null 2>&1
+
+# Crear carpeta del panel
+rm -rf "$PANEL_DIR"
+mkdir -p "$PANEL_DIR/assets"
+cd "$PANEL_DIR"
+
+# Crear config.php
+cat <<EOF > config.php
+<?php
+\$usuario_panel = "$USER";
+\$contrasena_panel = "$PASS";
+?>
+EOF
+
+# Crear index.php (login)
+cat <<'EOF' > index.php
+<?php
+session_start();
+include("config.php");
+
+if (isset($_SESSION['usuario'])) {
+    header("Location: dashboard.php");
+    exit();
+}
+
+$error = "";
+if ($_SERVER["REQUEST_METHOD"] == "POST") {
+    $user = $_POST["usuario"];
+    $pass = $_POST["contrasena"];
+    if ($user === $usuario_panel && $pass === $contrasena_panel) {
+        $_SESSION['usuario'] = $user;
+        header("Location: dashboard.php");
+        exit();
+    } else {
+        $error = "Usuario o contraseña incorrectos";
+    }
+}
+?>
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<title>Login - Panel Web</title>
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body class="login-body">
+<div class="login-box">
+    <h2>Panel Web</h2>
+    <form method="POST">
+        <input type="text" name="usuario" placeholder="Usuario" required>
+        <input type="password" name="contrasena" placeholder="Contraseña" required>
+        <button type="submit">Ingresar</button>
+        <?php if ($error): ?>
+            <p class="error"><?= $error ?></p>
+        <?php endif; ?>
+    </form>
+</div>
+<script src="assets/script.js"></script>
+</body>
+</html>
+EOF
+
+# Crear dashboard.php
+cat <<'EOF' > dashboard.php
+<?php
+session_start();
+if (!isset($_SESSION['usuario'])) {
+    header("Location: index.php");
+    exit();
+}
+?>
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<title>Dashboard - Panel Web</title>
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+<nav class="navbar">
+    <h1>Dashboard</h1>
+    <a href="logout.php">Cerrar sesión</a>
+</nav>
+<main class="content">
+    <div class="card">
+        <h2>Bienvenido 👋</h2>
+        <p>Has iniciado sesión correctamente en el panel web.</p>
+    </div>
+    <div class="card">
+        <h3>Información del servidor</h3>
+        <ul>
+            <li>PHP: <?= phpversion() ?></li>
+            <li>Servidor: <?= $_SERVER['SERVER_SOFTWARE'] ?></li>
+            <li>IP: <?= $_SERVER['SERVER_ADDR'] ?></li>
+        </ul>
+    </div>
+</main>
+<script src="assets/script.js"></script>
+</body>
+</html>
+EOF
+
+# Crear logout.php
+cat <<'EOF' > logout.php
+<?php
+session_start();
+session_destroy();
+header("Location: index.php");
+exit();
+?>
+EOF
+
+# Crear style.css
+cat <<'EOF' > assets/style.css
+body {
+  font-family: "Segoe UI", sans-serif;
+  background: #0f172a;
+  color: #f8fafc;
+  margin: 0;
+  padding: 0;
+}
+.login-body {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  height: 100vh;
+}
+.login-box {
+  background: #1e293b;
+  padding: 2em;
+  border-radius: 15px;
+  box-shadow: 0 0 25px rgba(0,0,0,0.4);
+  width: 300px;
+  text-align: center;
+}
+.login-box h2 {
+  margin-bottom: 20px;
+}
+.login-box input {
+  width: 100%;
+  padding: 10px;
+  margin-bottom: 10px;
+  border: none;
+  border-radius: 8px;
+  background: #334155;
+  color: #fff;
+}
+.login-box button {
+  background: #2563eb;
+  border: none;
+  padding: 10px;
+  width: 100%;
+  border-radius: 8px;
+  cursor: pointer;
+  color: #fff;
+  font-weight: bold;
+  transition: 0.3s;
+}
+.login-box button:hover {
+  background: #1d4ed8;
+}
+.error {
+  color: #f87171;
+  margin-top: 10px;
+}
+.navbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: #1e293b;
+  padding: 15px 25px;
+}
+.navbar a {
+  color: #f8fafc;
+  text-decoration: none;
+  background: #dc2626;
+  padding: 8px 12px;
+  border-radius: 8px;
+}
+.content {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  gap: 1em;
+  padding: 2em;
+}
+.card {
+  background: #1e293b;
+  border-radius: 12px;
+  padding: 1.5em;
+  box-shadow: 0 0 10px rgba(0,0,0,0.3);
+}
+EOF
+
+# Crear script.js
+echo 'console.log("Panel Web cargado correctamente.");' > assets/script.js
+
+# Configurar Apache
+echo -e "\033[1;33m[+] Configurando Apache...\033[0m"
+cat <<EOF > "$CONF_FILE"
+<VirtualHost *:${PORT}>
+    ServerAdmin admin@localhost
+    DocumentRoot ${PANEL_DIR}
+    <Directory ${PANEL_DIR}>
+        Options Indexes FollowSymLinks
+        AllowOverride All
+        Require all granted
+    </Directory>
+    ErrorLog \${APACHE_LOG_DIR}/panel_error.log
+    CustomLog \${APACHE_LOG_DIR}/panel_access.log combined
+</VirtualHost>
+EOF
+
+# Habilitar sitio y módulos
+a2dissite 000-default.conf >/dev/null 2>&1
+a2ensite reycodessh.conf >/dev/null 2>&1
+a2enmod rewrite >/dev/null 2>&1
+systemctl reload apache2 >/dev/null 2>&1 || systemctl restart apache2 >/dev/null 2>&1
+
+IP=$(hostname -I | awk '{print $1}')
+
+echo ""
+echo -e "\033[1;32m✔ Instalación completada correctamente.\033[0m"
+echo ""
+echo -e "🌐 Acceso al panel: \033[1;36mhttp://$IP:$PORT\033[0m"
+echo -e "👤 Usuario: \033[1;33m$USER\033[0m"
+echo -e "🔑 Contraseña: \033[1;33m$PASS\033[0m"
+echo ""
+echo -e "💡 Si ves la página por defecto de Apache, ejecuta:"
+echo -e "\033[1;36msudo a2dissite 000-default.conf && sudo systemctl reload apache2\033[0m"
+echo ""
