@@ -7,7 +7,7 @@ CONF_FILE="/etc/apache2/sites-available/reycodessh.conf"
 PORT=80
 USER="admin"
 PASS="admin123"
-ZIP_URL="https://tuservidor.com/descargas/panel.zip" # Cambiar por tu URL real
+ZIP_URL="https://www.dropbox.com/scl/fi/qurxqm73i4lirtuabtfte/panel_reyrs.zip" # Cambiar por tu URL real
 
 # Función: Instalar dependencias
 instalar_dependencias() {
