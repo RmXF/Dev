@@ -998,50 +998,54 @@ rm -rf /etc/usr/bin/usercode; usercode
 
 monit_user() {
 clear
-# Colores
+# ======== COLORES ========
 yellow=$(tput setaf 3)
-gren=$(tput setaf 2)
+green=$(tput setaf 2)
 red=$(tput setaf 1)
 white=$(tput setaf 7)
-cierre=$(tput sgr0)
+reset=$(tput sgr0)
 
-# Calcular ancho dinámico
+# ======== AJUSTE AUTOMÁTICO DE ANCHO ========
 term_width=$(tput cols)
-if [[ $term_width -lt 60 ]]; then
-  term_width=60
-fi
-bar_line=$(printf '%*s' "$term_width" '' | tr ' ' '━')
+((term_width < 80)) && term_width=80
+line=$(printf '%*s' "$term_width" '' | tr ' ' '━')
 
-# Encabezado
+# ======== ENCABEZADO ========
 while true; do
 clear
-echo -e "\033[1;37m${bar_line}\033[0m"
-txtvar=$(printf '%-17s' "USUARIO")
-txtvar+=$(printf '%-20s' "ESTATUS")
-txtvar+=$(printf '%-18s' "CONEXION")
-txtvar+=$(printf '%-18s' "TIEMPO ONLINE")
-txtvar+=$(printf '%-10s' "MG")
-echo -e "\033[1;33m${txtvar}${cierre}"
-echo -e "\033[1;37m${bar_line}\033[0m"
+echo -e "\033[1;37m$line\033[0m"
 
-# Borrar y recrear base temporal
+# Centrar cada título en su columna
+printf "%-20s %-20s %-20s %-20s %-10s\n" \
+  "$(printf '%*s' $((10+${#title}/2)) "USUARIO")" \
+  "ESTATUS" \
+  "CONEXIÓN" \
+  "TIEMPO ONLINE" \
+  "MG"
+echo -e "\033[1;37m$line\033[0m"
+
+# ======== RECORRER USUARIOS ========
 > /tmp/RS_temp_usage
 
-# Recorrer usuarios del sistema reales (UID >= 1000)
 for user in $(awk -F: '$3 >= 1000 {print $1}' /etc/passwd | grep -v "nobody"); do
   uid=$(id -u "$user" 2>/dev/null)
   [[ -z "$uid" ]] && continue
 
-  # Detectar procesos activos
+  # Procesos activos
   PID="0+"
-  [[ $(dpkg --get-selections|grep -w "openssh"|head -1) ]] && PID+="$(ps aux|grep -v grep|grep sshd|grep -w "$user"|grep -v root|wc -l)+"
-  [[ $(dpkg --get-selections|grep -w "dropbear"|head -1) ]] && PID+="$(dropbear_pids|grep -w "$user"|wc -l)+"
-  [[ $(dpkg --get-selections|grep -w "openvpn"|head -1) ]] && [[ -e /etc/openvpn/openvpn-status.log ]] && [[ $(openvpn_pids|grep -w "$user"|cut -d'|' -f2) ]] && PID+="$(openvpn_pids|grep -w "$user"|cut -d'|' -f2)+"
+  [[ $(dpkg --get-selections | grep -w "openssh" | head -1) ]] && PID+="$(ps aux | grep -v grep | grep sshd | grep -w "$user" | grep -v root | wc -l)+"
+  [[ $(dpkg --get-selections | grep -w "dropbear" | head -1) ]] && PID+="$(dropbear_pids | grep -w "$user" | wc -l)+"
+  [[ $(dpkg --get-selections | grep -w "openvpn" | head -1) ]] && [[ -e /etc/openvpn/openvpn-status.log ]] && [[ $(openvpn_pids | grep -w "$user" | cut -d'|' -f2) ]] && PID+="$(openvpn_pids | grep -w "$user" | cut -d'|' -f2)+"
   PID+="0"
 
-  [[ $(echo $PID | bc) -gt 0 ]] && user_status="${gren}ONLINE${cierre}" || user_status="${red}OFFLINE${cierre}"
+  # Estado
+  if [[ $(echo "$PID" | bc) -gt 0 ]]; then
+    user_status="${green}ONLINE${reset}"
+  else
+    user_status="${red}OFFLINE${reset}"
+  fi
 
-  # Calcular tiempo online
+  # Tiempo online (si existe variable TIMEUS)
   TIMEON="${TIMEUS[$user]}"
   [[ -z $TIMEON ]] && TIMEON=0
   MIN=$(($TIMEON/60))
@@ -1050,35 +1054,35 @@ for user in $(awk -F: '$3 >= 1000 {print $1}' /etc/passwd | grep -v "nobody"); d
   MIN=$(($MIN-$HOR*60))
   HOUR="${HOR}h:${MIN}m:${SEC}s"
 
+  # Máximo de conexiones
   [[ -z $(cat ${USRdatabase} | grep -w "${user}") ]] && MAXUSER="**" || MAXUSER="$(cat ${USRdatabase} | grep -w "${user}" | cut -d'|' -f4)"
   TOTALPID="$(echo $PID | bc)/$MAXUSER"
 
-  # 🔥 Lectura directa desde iptables (consumo real)
+  # 🔥 Consumo en tiempo real (iptables)
   bytes=$(iptables -L -v -n | grep "owner UID match $uid" | awk '{sum += $2} END {print sum}')
   [[ -z "$bytes" ]] && bytes=0
   mb=$((bytes / 1024 / 1024))
   consumo_text="${mb}MB"
   echo "$user|$bytes|activo" >> /tmp/RS_temp_usage
 
-  # Alinear columnas dinámicamente
-  printf "%-17s %-18s %-17s %-18s %-10s\n" \
-    "${yellow}${user}${cierre}" \
+  # Centrar cada dato en su columna
+  printf "%-20s %-20s %-20s %-20s %-10s\n" \
+    "${yellow}${user}${reset}" \
     "[$user_status]" \
     "${TOTALPID}" \
     "${HOUR}" \
     "${consumo_text}"
 done
 
-echo -e "\033[1;37m${bar_line}\033[0m"
 mv /tmp/RS_temp_usage /etc/RSlimit_users 2>/dev/null
+echo -e "\033[1;37m$line\033[0m"
 
-# Control de salida
+# ======== SALIDA ========
 echo
-read -p "$(echo -e "${gren}Presione [Enter] para volver al menú principal...${cierre}")"
+read -p "$(echo -e "${green}Presione [Enter] para volver al menú principal...${reset}")"
 break
 done
 
-# 🔁 Regresar correctamente al menú principal
 menu
 }
 
