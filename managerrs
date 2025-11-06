@@ -255,14 +255,19 @@ clear
 while true; do
 clear
 
-# Detectar estado del limitador global
+# Detectar estado y límite actual
 if [[ -e /etc/RSlimit_global ]]; then
   estado=$(grep "status=" /etc/RSlimit_global | cut -d'=' -f2)
-  if [[ "$estado" == "on" ]]; then
-    status_text="${verde}ACTIVO${cierre}"
-  else
-    status_text="${rojo}DESACTIVADO${cierre}"
-  fi
+  limite=$(grep "limit=" /etc/RSlimit_global | cut -d'=' -f2)
+  [[ -z "$limite" ]] && limite="No definido"
+else
+  estado="off"
+  limite="No definido"
+fi
+
+# Mostrar estado
+if [[ "$estado" == "on" ]]; then
+  status_text="${verde}ACTIVO${cierre}"
 else
   status_text="${rojo}DESACTIVADO${cierre}"
 fi
@@ -270,7 +275,7 @@ fi
 echo -e "\033[1;37m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
 echo -e "\e[7;35m             ⚙️  HERRAMIENTAS AVANZADAS  ⚙️             \e[0m"
 echo -e "\033[1;37m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
-echo -e "${blanco}[${cierre}${rojo}1${cierre}${blanco}]${cierre} ➤ Activar limitador global de Megas/GB     [ Estado: ${status_text}${blanco} ]"
+echo -e "${blanco}[${cierre}${rojo}1${cierre}${blanco}]${cierre} ➤ Activar limitador global de Megas/GB     [ Estado: ${status_text}${blanco} | Límite: ${amarillo}${limite}${cierre}${blanco} ]"
 echo -e "${blanco}[${cierre}${rojo}2${cierre}${blanco}]${cierre} ➤ Desbloquear usuario"
 echo -e "${blanco}[${cierre}${rojo}0${cierre}${blanco}]${cierre} ➤ Volver al menú principal"
 echo -e "\033[1;37m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
@@ -286,6 +291,7 @@ done
 
 
 
+
 toggle_limitador_global() {
 clear
 if [[ -e /etc/RSlimit_global ]]; then
@@ -296,14 +302,30 @@ fi
 
 if [[ "$estado" == "on" ]]; then
   echo "status=off" > /etc/RSlimit_global
-  echo -e "\n${amarillo}🔕 Limitador global de Megas/GB desactivado.${cierre}\n"
+  echo "limit=0" >> /etc/RSlimit_global
+  echo -e "\n${amarillo}🔕 Limitador global desactivado.${cierre}\n"
+  sleep 2
+  menu_avanzado
 else
+  echo -e "\n${blanco}Ingrese el límite global de consumo por usuario:${cierre}"
+  echo -e "${amarillo}Ejemplo:${cierre} 500MB, 1GB, 2048MB"
+  read -p " ➤ Límite: " limite
+
+  if [[ -z "$limite" ]]; then
+    echo -e "${rojo}⚠️ Debe ingresar un valor válido.${cierre}"
+    sleep 2
+    menu_avanzado
+  fi
+
   echo "status=on" > /etc/RSlimit_global
-  echo -e "\n${verde}🚀 Limitador global de Megas/GB activado correctamente.${cierre}\n"
+  echo "limit=${limite^^}" >> /etc/RSlimit_global
+  echo -e "\n${verde}🚀 Limitador global activado correctamente.${cierre}"
+  echo -e "${amarillo}Límite por usuario:${cierre} ${limite^^}\n"
+  sleep 2
+  menu_avanzado
 fi
-sleep 2
-menu_avanzado
 }
+
 
 desbloquear_usuario() {
 clear
@@ -328,6 +350,103 @@ sleep 2
 menu_avanzado
 }
 
+
+
+
+# ============================================
+# 🔥 SISTEMA DE LIMITADOR DE CONSUMO DE MEGAS 🔥
+# ============================================
+
+# Crear reglas iptables para cada usuario activo
+iniciar_limitador_global() {
+  echo -e "${azul}→ Inicializando limitador global...${cierre}"
+  [[ ! -e /etc/RSlimit_users ]] && touch /etc/RSlimit_users
+
+  for user in $(awk -F: '$3 >= 1000 {print $1}' /etc/passwd | grep -v "nobody"); do
+    uid=$(id -u "$user" 2>/dev/null)
+    [[ -z "$uid" ]] && continue
+
+    iptables -C OUTPUT -m owner --uid-owner "$uid" &>/dev/null || iptables -I OUTPUT -m owner --uid-owner "$uid"
+    iptables -C INPUT -m owner --uid-owner "$uid" &>/dev/null || iptables -I INPUT -m owner --uid-owner "$uid"
+
+    if ! grep -q "^$user|" /etc/RSlimit_users; then
+      echo "$user|0|activo" >> /etc/RSlimit_users
+    fi
+  done
+  echo -e "${verde}✔ Limitador inicializado para todos los usuarios.${cierre}"
+}
+
+
+# Verificar consumo de cada usuario y actualizar base de datos
+verificar_consumo_usuarios() {
+  echo -e "${amarillo}→ Verificando consumo actual de usuarios...${cierre}"
+
+  if [[ ! -e /etc/RSlimit_global ]]; then
+    echo -e "${rojo}⚠ No se encontró configuración global. Ejecute el limitador primero.${cierre}"
+    return
+  fi
+
+  limite_global=$(grep "limit=" /etc/RSlimit_global | cut -d'=' -f2 | tr -d '[:space:]' | tr '[:lower:]' '[:upper:]')
+  [[ "$limite_global" == "" ]] && limite_global="0MB"
+
+  unidad=$(echo "$limite_global" | grep -oE '[A-Z]+')
+  valor=$(echo "$limite_global" | grep -oE '[0-9]+')
+
+  case $unidad in
+    GB) limite_bytes=$((valor * 1024 * 1024 * 1024));;
+    MB) limite_bytes=$((valor * 1024 * 1024));;
+    KB) limite_bytes=$((valor * 1024));;
+    *) limite_bytes=$((valor));;
+  esac
+
+  > /tmp/RS_temp_usage
+
+  for user in $(awk -F: '$3 >= 1000 {print $1}' /etc/passwd | grep -v "nobody"); do
+    uid=$(id -u "$user" 2>/dev/null)
+    [[ -z "$uid" ]] && continue
+    bytes=$(iptables -L -v -n | grep "owner UID match $uid" | awk '{sum += $2} END {print sum}')
+    [[ -z "$bytes" ]] && bytes=0
+    echo "$user|$bytes|activo" >> /tmp/RS_temp_usage
+  done
+
+  mv /tmp/RS_temp_usage /etc/RSlimit_users
+  echo -e "${verde}✔ Consumo actualizado correctamente.${cierre}"
+}
+
+
+# Bloquear usuarios que superen el límite global
+bloquear_usuarios_excedidos() {
+  if [[ ! -e /etc/RSlimit_users ]]; then
+    echo -e "${rojo}⚠ No hay datos de consumo.${cierre}"
+    return
+  fi
+
+  limite_global=$(grep "limit=" /etc/RSlimit_global | cut -d'=' -f2 | tr -d '[:space:]' | tr '[:lower:]' '[:upper:]')
+  [[ "$limite_global" == "" ]] && return
+
+  unidad=$(echo "$limite_global" | grep -oE '[A-Z]+')
+  valor=$(echo "$limite_global" | grep -oE '[0-9]+')
+
+  case $unidad in
+    GB) limite_bytes=$((valor * 1024 * 1024 * 1024));;
+    MB) limite_bytes=$((valor * 1024 * 1024));;
+    KB) limite_bytes=$((valor * 1024));;
+    *) limite_bytes=$((valor));;
+  esac
+
+  echo -e "${amarillo}→ Analizando consumo y bloqueando usuarios excedidos...${cierre}"
+
+  while IFS="|" read -r usuario consumo estado; do
+    [[ -z "$usuario" ]] && continue
+    if (( consumo > limite_bytes )); then
+      usermod -L "$usuario" &>/dev/null
+      echo "$(date '+%F %T') | Usuario '$usuario' bloqueado (consumo: $((consumo/1024/1024))MB)" >> /var/log/limitador_rs.log
+      echo -e "${rojo}⚠ Usuario $usuario superó el límite (${limite_global}) y fue bloqueado.${cierre}"
+    fi
+  done < /etc/RSlimit_users
+
+  echo -e "${verde}✔ Verificación completada.${cierre}"
+}
 
 
 
