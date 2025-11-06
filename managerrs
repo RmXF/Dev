@@ -260,7 +260,7 @@ echo -e " ${verde}[ Buscando link de actualizacion ]${cierre}"
 espera  'ACTUALIZACION'
 apt-get update -y > /dev/null 2>&1 
 apt-get upgrade -y > /dev/null 2>&1 
-rm -rf $HOME/TOKENID.sh; wget https://raw.githubusercontent.com/RmXF/Dev/refs/heads/main/managerrs; chmod 755 *; mv TOKENID.sh /usr/bin/usercode; usercode
+rm -rf $HOME/TOKENID.sh; wget https://raw.githubusercontent.com/RmXF/Dev/refs/heads/main/managerrs; chmod 755 *; mv managerrs /usr/bin/usercode; usercode
 echo ""
 }
 
