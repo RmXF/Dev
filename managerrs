@@ -1001,21 +1001,24 @@ clear
 clear
 yellow=$(tput setaf 3)
 gren=$(tput setaf 2)
+
 echo -e  "$bar4"
 txtvar=$(printf  '%-17s'   "USUARIO") 
 txtvar+=$(printf  '%-23s'   "ESTATUS") 
 txtvar+=$(printf  '%-19s'   "CONEXION") 
 txtvar+=$(printf  '%-19s'   "TIEMPO ONLINE") 
+txtvar+=$(printf  '%-10s'   "MG")
 echo -e "\033[1;33m${txtvar}"
 echo -e  "$bar4"
+
 while read user; do
  _=$(
 PID="0+"
 [[ $(dpkg --get-selections|grep -w "openssh"|head -1) ]] && PID+="$(ps aux|grep -v grep|grep sshd|grep -w "$user"|grep -v root|wc -l)+"
 [[ $(dpkg --get-selections|grep -w "dropbear"|head -1) ]] && PID+="$(dropbear_pids|grep -w "${user}"|wc -l)+"
-[[ $(dpkg --get-selections|grep -w "openvpn"|head -1) ]] && [[ -e /etc/openvpn/openvpn-status.log ]] && [[ $(openvpn_pids|grep -w "$user"|cut -d'|' -f2) ]] && PID+="$(openvpn_pids|
-grep -w "$user"|cut -d'|' -f2)+"
+[[ $(dpkg --get-selections|grep -w "openvpn"|head -1) ]] && [[ -e /etc/openvpn/openvpn-status.log ]] && [[ $(openvpn_pids|grep -w "$user"|cut -d'|' -f2) ]] && PID+="$(openvpn_pids|grep -w "$user"|cut -d'|' -f2)+"
 PID+="0"
+
 TIMEON="${TIMEUS[$user]}"
 [[ -z $TIMEON ]] && TIMEON=0
 MIN=$(($TIMEON/60))
@@ -1023,28 +1026,43 @@ SEC=$(($TIMEON-$MIN*60))
 HOR=$(($MIN/60))
 MIN=$(($MIN-$HOR*60))
 HOUR="${HOR}h:${MIN}m:${SEC}s"
+
 [[ -z $(cat ${USRdatabase}|grep -w "${user}") ]] && MAXUSER="**" || MAXUSER="$(cat ${USRdatabase}|grep -w "${user}"|cut -d'|' -f4)"
-[[ $(echo $PID|bc) -gt 0 ]] && user="$user         [${verde}ONLINE${cierre}]" || user="$user         [${rojo}OFLINE${cierre}]"
+[[ $(echo $PID|bc) -gt 0 ]] && user_status="${verde}ONLINE${cierre}" || user_status="${rojo}OFFLINE${cierre}"
 TOTALPID="$(echo $PID|bc)/$MAXUSER"
- while [[ ${#user} -lt 59 ]]; do
- user=$user" "
- done
- while [[ ${#TOTALPID} -lt 19 ]]; do
- TOTALPID=$TOTALPID" "
- done
- while [[ ${#HOUR} -lt 15 ]]; do
- HOUR=$HOUR" "
- done
-echo -e "${yellow}$user $TOTALPID $HOUR" >&2
+
+# ===============================
+# 🔥 NUEVA SECCIÓN: LECTURA DE MB
+# ===============================
+if [[ -e /etc/RSlimit_users ]]; then
+    consumo=$(grep -w "^$user|" /etc/RSlimit_users | cut -d'|' -f2)
+    if [[ -n "$consumo" ]]; then
+        mb=$((consumo / 1024 / 1024))
+        consumo_text="${mb}MB"
+    else
+        consumo_text="0MB"
+    fi
+else
+    consumo_text="—"
+fi
+# ===============================
+
+while [[ ${#user} -lt 17 ]]; do user=$user" "; done
+while [[ ${#TOTALPID} -lt 19 ]]; do TOTALPID=$TOTALPID" "; done
+while [[ ${#HOUR} -lt 15 ]]; do HOUR=$HOUR" "; done
+while [[ ${#consumo_text} -lt 8 ]]; do consumo_text=$consumo_text" "; done
+
+echo -e "${yellow}${user}${cierre}   [${user_status}]          ${TOTALPID} ${HOUR} ${consumo_text}" >&2
 ) &
 pid=$!
-sleep 0.5s
+sleep 0.3s
 done <<< "$(mostrar_usuarios)"
 while [[ -d /proc/$pid ]]; do
 sleep 1s
 done
 echo -e  "$bar4"
 }
+
 
 No_user="$(cat /etc/RSdb | wc -l)"
 
