@@ -4,7 +4,7 @@
 # =============================================
 
 LOG_FILE="/var/log/managerrs_install.log"
-REPO_URL="https://tudominio.com/managerrs.sh"  # <---- 🔁 Reemplaza con tu URL real del script
+REPO_URL="https://raw.githubusercontent.com/RmXF/Dev/refs/heads/main/managerrs"  # <---- 🔁 Reemplaza con tu URL real del script
 BOT_URL="https://tudominio.com/rsbot.sh"       # <---- 🔁 Opcional (si usarás el bot)
 BIN_PATH="/usr/bin/usercode"
 SCRIPT_PATH="/etc/ManagerRS"
