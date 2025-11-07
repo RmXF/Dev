@@ -1,0 +1,101 @@
+#!/bin/bash
+# ===================================================
+# 🤖 RSBot - Bot de gestión Telegram para ManagerRS
+# ===================================================
+
+CONFIG="/etc/RSbot_config"
+LOG="/var/log/RSbot.log"
+
+[[ ! -e $CONFIG ]] && echo "Archivo de configuración no encontrado." && exit 1
+
+TOKEN=$(grep "token=" $CONFIG | cut -d'=' -f2)
+CHAT_ID=$(grep "chat_id=" $CONFIG | cut -d'=' -f2)
+API="https://api.telegram.org/bot$TOKEN"
+OFFSET=0
+
+send_msg() {
+  local MSG="$1"
+  curl -s -X POST "$API/sendMessage" -d chat_id="$CHAT_ID" -d text="$MSG" -d parse_mode="HTML" >/dev/null
+}
+
+send_keyboard() {
+  local TEXT="$1"
+  local KEYBOARD="$2"
+  curl -s -X POST "$API/sendMessage" \
+    -d chat_id="$CHAT_ID" \
+    -d text="$TEXT" \
+    -d parse_mode="HTML" \
+    -d reply_markup="$KEYBOARD" >/dev/null
+}
+
+build_main_keyboard() {
+  cat <<EOF
+{
+  "inline_keyboard": [
+    [
+      {"text": "📱 Crear usuario", "callback_data": "crear"},
+      {"text": "🗑 Eliminar usuario", "callback_data": "eliminar"}
+    ],
+    [
+      {"text": "♻️ Renovar usuario", "callback_data": "renovar"},
+      {"text": "⚙️ Alterar límite", "callback_data": "limite"}
+    ],
+    [
+      {"text": "⏰ Alterar expiración", "callback_data": "expiracion"}
+    ]
+  ]
+}
+EOF
+}
+
+process_callback() {
+  local data="$1"
+  local id="$2"
+
+  case "$data" in
+    "crear")
+      send_msg "👤 Ingrese el nombre del nuevo usuario:"
+      ;;
+    "eliminar")
+      send_msg "🗑 Envíe el nombre del usuario que desea eliminar:"
+      ;;
+    "renovar")
+      send_msg "♻️ Envíe el nombre del usuario que desea renovar:"
+      ;;
+    "limite")
+      send_msg "⚙️ Ingrese el usuario y el nuevo límite de conexiones:"
+      ;;
+    "expiracion")
+      send_msg "⏰ Ingrese el usuario y los días extra de expiración:"
+      ;;
+  esac
+}
+
+# ============================
+#  INICIO DEL BOT
+# ============================
+send_keyboard "🤖 <b>Bienvenido al Panel de Gestión RS</b>\n\nSelecciona una acción:" "$(build_main_keyboard)"
+
+echo "$(date '+%F %T') RSBot iniciado." >> "$LOG"
+
+while true; do
+  UPDATES=$(curl -s "$API/getUpdates?offset=$OFFSET")
+
+  # Leer nuevos mensajes
+  for row in $(echo "$UPDATES" | jq -c '.result[]'); do
+    UPDATE_ID=$(echo "$row" | jq '.update_id')
+    OFFSET=$((UPDATE_ID + 1))
+
+    CALLBACK_DATA=$(echo "$row" | jq -r '.callback_query.data // empty')
+    CALLBACK_ID=$(echo "$row" | jq -r '.callback_query.id // empty')
+    MESSAGE_TEXT=$(echo "$row" | jq -r '.message.text // empty')
+
+    if [[ -n "$CALLBACK_DATA" ]]; then
+      process_callback "$CALLBACK_DATA" "$CALLBACK_ID"
+    elif [[ "$MESSAGE_TEXT" == "/start" ]]; then
+      send_keyboard "🔸 <b>Panel de control SSH</b>\nSelecciona una opción:" "$(build_main_keyboard)"
+    fi
+  done
+
+  sleep 2
+done
