@@ -1,0 +1,211 @@
+#!/usr/bin/env bash
+# optvps.sh
+# Script para optimizar un VPS para menor latencia y mejor rendimiento VPN
+# Uso: sudo ./optvps.sh
+# Crea backup de /etc/sysctl.conf y de configuraciones de red usadas.
+# Autor: ChatGPT (adaptar según necesidades)
+
+set -euo pipefail
+
+BACKUP_DIR="/root/optvps_backups_$(date +%Y%m%d%H%M%S)"
+SYSCTL_FILE="/etc/sysctl.conf"
+MODFILE="/etc/modules-load.d/optvps.conf"
+
+echo "Creando backup en $BACKUP_DIR ..."
+mkdir -p "$BACKUP_DIR"
+cp -a "$SYSCTL_FILE" "$BACKUP_DIR"/sysctl.conf.bak || true
+
+# Detectar interfaz primaria (no loopback)
+INTF="$(ip route get 1.1.1.1 2>/dev/null | awk '/dev/ {for(i=1;i<=NF;i++){ if($i=="dev"){print $(i+1); exit }}}')"
+if [ -z "$INTF" ]; then
+  INTF="eth0"
+fi
+
+echo "Interfaz detectada: $INTF"
+
+### FUNCIONES AUX ###
+apply_sysctl() {
+  echo "Aplicando ajustes sysctl temporales..."
+  sysctl -w net.core.default_qdisc=fq
+  sysctl -w net.ipv4.tcp_congestion_control=bbr || true
+  sysctl -w net.core.netdev_max_backlog=250000
+  sysctl -w net.core.rmem_max=16777216
+  sysctl -w net.core.wmem_max=16777216
+  sysctl -w net.ipv4.tcp_rmem="4096 87380 16777216"
+  sysctl -w net.ipv4.tcp_wmem="4096 65536 16777216"
+  sysctl -w net.ipv4.tcp_mtu_probing=1
+  sysctl -w net.ipv4.tcp_window_scaling=1
+  sysctl -w net.ipv4.tcp_tw_reuse=1
+  sysctl -w net.ipv4.tcp_no_metrics_save=1
+  sysctl -w net.ipv4.tcp_fin_timeout=15
+  sysctl -w net.ipv4.neigh.default.gc_thresh1=512
+  sysctl -w net.ipv4.neigh.default.gc_thresh2=2048
+  sysctl -w net.ipv4.neigh.default.gc_thresh3=4096
+  echo "Sysctl temporales aplicados."
+}
+
+persist_sysctl() {
+  echo "Guardando ajustes persistentes en $SYSCTL_FILE ..."
+  # Añadir bloque identificado para poder revertir fácilmente
+  sed -i '/# BEGIN OPTVPS/,/# END OPTVPS/d' "$SYSCTL_FILE" || true
+  cat >> "$SYSCTL_FILE" <<'EOF'
+# BEGIN OPTVPS - optimizaciones para baja latencia / VPN
+net.core.default_qdisc = fq
+net.ipv4.tcp_congestion_control = bbr
+net.core.netdev_max_backlog = 250000
+net.core.rmem_max = 16777216
+net.core.wmem_max = 16777216
+net.ipv4.tcp_rmem = 4096 87380 16777216
+net.ipv4.tcp_wmem = 4096 65536 16777216
+net.ipv4.tcp_mtu_probing = 1
+net.ipv4.tcp_window_scaling = 1
+net.ipv4.tcp_tw_reuse = 1
+net.ipv4.tcp_no_metrics_save = 1
+net.ipv4.tcp_fin_timeout = 15
+net.ipv4.neigh.default.gc_thresh1 = 512
+net.ipv4.neigh.default.gc_thresh2 = 2048
+net.ipv4.neigh.default.gc_thresh3 = 4096
+# END OPTVPS
+EOF
+  sysctl --system >/dev/null || true
+  echo "Persistente aplicado."
+}
+
+enable_bbr() {
+  echo "Intentando activar BBR (si el kernel lo soporta)..."
+  if ! modprobe tcp_bbr 2>/dev/null; then
+    echo "modprobe tcp_bbr falló: el kernel puede no soportar BBR. Continuando sin cambiar BBR."
+    return 1
+  fi
+  echo "tcp_bbr" > "$MODFILE" || true
+  sysctl -w net.core.default_qdisc=fq
+  sysctl -w net.ipv4.tcp_congestion_control=bbr
+  echo "BBR cargado. Ver estado:"
+  sysctl net.ipv4.tcp_congestion_control || true
+}
+
+setup_qdisc() {
+  echo "Instalando tc (iproute2) si es necesario..."
+  if ! command -v tc >/dev/null; then
+    if [ -f /etc/debian_version ]; then apt-get update && apt-get install -y iproute2; fi
+    if [ -f /etc/redhat-release ]; then yum install -y iproute; fi
+  fi
+
+  echo "Aplicando qdisc fq_codel en $INTF (mejora latencia por colas)..."
+  tc qdisc replace dev "$INTF" root fq_codel || {
+    echo "Fallo al setear qdisc en $INTF. Revisa que la interfaz exista."
+  }
+  echo "qdisc aplicado."
+}
+
+tune_ethtool() {
+  if ! command -v ethtool >/dev/null; then
+    echo "Instalando ethtool si es posible..."
+    if [ -f /etc/debian_version ]; then apt-get update && apt-get install -y ethtool; fi
+    if [ -f /etc/redhat-release ]; then yum install -y ethtool; fi
+  fi
+
+  if command -v ethtool >/dev/null; then
+    echo "Opcional: desactivando GRO/TSO/LRO (reduce latencia, aumenta CPU)."
+    # Guardar configuración actual
+    ethtool -k "$INTF" > "$BACKUP_DIR/ethtool_${INTF}_k.txt" || true
+    ethtool -K "$INTF" gro off tso off gso off || true
+    echo "Desactivado GRO/TSO/GSO en $INTF (si soportado)."
+  else
+    echo "ethtool no disponible, saltando ajustes de offload."
+  fi
+}
+
+tune_mtu_for_vpn() {
+  # Valores comunes: wireguardMTU ~1420, openvpn tun0 1500/1400. No forzar si no existe.
+  if ip link show tun0 >/dev/null 2>&1; then
+    echo "Ajustando MTU en tun0 a 1420 (recomendado para WireGuard/OpenVPN por NAT)."
+    ip link set dev tun0 mtu 1420 || true
+  fi
+  if ip link show wg0 >/dev/null 2>&1; then
+    echo "Ajustando MTU en wg0 a 1420 (WireGuard)."
+    ip link set dev wg0 mtu 1420 || true
+  fi
+}
+
+increase_file_limits() {
+  echo "Aumentando límites de archivos en /etc/security/limits.conf (persistente)..."
+  if ! grep -q "OPT_VPS_FD_LIMIT" /etc/security/limits.conf 2>/dev/null; then
+    cat >> /etc/security/limits.conf <<'EOF'
+
+# OPTVPS - aumentar límites de file descriptors
+* soft nofile 200000
+* hard nofile 300000
+# OPT_VPS_FD_LIMIT
+EOF
+  fi
+}
+
+show_summary() {
+  echo
+  echo "-------------------------------------------------"
+  echo "Optimizaciones aplicadas (resumen):"
+  echo "- sysctl tweaks (rmem/wmem, backlog, MTU probing, tcp_tw_reuse, etc.)"
+  echo "- Intento de activar BBR (tcp_bbr) y setear default_qdisc=fq"
+  echo "- Aplicado qdisc fq_codel en la interfaz $INTF"
+  echo "- Opcional: GRO/TSO/GSO deshabilitados (con ethtool) para menor latencia"
+  echo "- MTU ajustado en tun0/wg0 si existen (1420)"
+  echo "- Límite de archivos aumentado (persistente)"
+  echo
+  echo "Backups guardados en: $BACKUP_DIR"
+  echo "Para revertir ejecuta: sudo bash ./optvps.sh --rollback"
+  echo "Pruebas recomendadas: ping -c 20 <client-ip>, iperf3 (udp) / iperf3 (tcp) entre cliente y VPS."
+  echo "-------------------------------------------------"
+}
+
+rollback() {
+  echo "Restaurando backup desde $BACKUP_DIR (si existe)..."
+  if [ -f "$BACKUP_DIR/sysctl.conf.bak" ]; then
+    cp -a "$BACKUP_DIR/sysctl.conf.bak" /etc/sysctl.conf
+    sysctl --system || true
+    echo "sysctl restaurado."
+  else
+    echo "No se encontró backup de sysctl en $BACKUP_DIR."
+  fi
+
+  # Revertir qdisc a pfifo_fast (valor por defecto en muchos sistemas)
+  tc qdisc replace dev "$INTF" root pfifo_fast || true
+  # Restaurar ethtool configuración si se guardó
+  if [ -f "$BACKUP_DIR/ethtool_${INTF}_k.txt" ]; then
+    echo "Restaurando configuración ethtool previa (manual, revisar $BACKUP_DIR/ethtool_${INTF}_k.txt)"
+  fi
+  echo "Rollback completado (revisar logs y reiniciar si es necesario)."
+}
+
+print_help() {
+  cat <<EOF
+Uso: sudo ./optvps.sh [opciones]
+
+Sin opciones: aplica optimizaciones y las persiste.
+--no-persist   : aplica solo temporal (no edita /etc/sysctl.conf)
+--skip-ethtool : no toca GRO/TSO/GSO
+--rollback     : intenta restaurar backups
+--help         : muestra esta ayuda
+EOF
+}
+
+# PARSE ARGS
+PERSIST=1
+SKIP_ETHTOOL=0
+if [ "${1:-}" = "--help" ]; then print_help; exit 0; fi
+if [ "${1:-}" = "--rollback" ]; then rollback; exit 0; fi
+if [ "${1:-}" = "--no-persist" ]; then PERSIST=0; fi
+if [ "${1:-}" = "--skip-ethtool" ]; then SKIP_ETHTOOL=1; fi
+
+# MAIN
+echo "Comenzando optimizaciones..."
+apply_sysctl
+if [ "$PERSIST" -eq 1 ]; then persist_sysctl; fi
+enable_bbr || echo "BBR no activado (no soportado o módulo faltante)."
+setup_qdisc
+if [ "$SKIP_ETHTOOL" -eq 0 ]; then tune_ethtool; else echo "Saltando ethtool por flag."; fi
+tune_mtu_for_vpn
+increase_file_limits
+show_summary
+
+exit 0
