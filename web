@@ -1,0 +1,428 @@
+#!/usr/bin/env bash
+# install_reycodessh_v2.sh
+# ReycodeSSH v2.0 - instalador todo-en-uno (sitio estático, Nginx, SSL autofirmado)
+# Compatible: Ubuntu 18.04+ / Debian 9+
+set -euo pipefail
+
+SITE_NAME="ReycodeSSH"
+WWW_DIR="/var/www/${SITE_NAME}"
+NGINX_SITE="/etc/nginx/sites-available/${SITE_NAME}"
+PORT_HTTP=80
+PORT_HTTPS=443
+CONTACT="venenorks@gmail.com"
+HERO_TEXT="Conectividad inteligente para todos tus servidores SSH"
+THEME_COLOR="azul oscuro"
+
+if [ "$(id -u)" -ne 0 ]; then
+  echo "Ejecuta este script como root o con sudo:"
+  echo "sudo bash install_reycodessh_v2.sh"
+  exit 1
+fi
+
+echo
+echo "🔰 Instalador ReycodeSSH v2.0 - iniciando"
+echo "Tema: ${THEME_COLOR}"
+echo "Hero: ${HERO_TEXT}"
+echo
+
+export DEBIAN_FRONTEND=noninteractive
+
+echo "📦 Actualizando paquetes..."
+apt-get update -y
+
+echo "📥 Instalando dependencias necesarias (nginx, unzip, openssl, curl)..."
+apt-get install -y nginx unzip openssl curl ca-certificates
+
+echo "🗂 Creando directorio del sitio en ${WWW_DIR}..."
+mkdir -p "${WWW_DIR}"
+chown -R www-data:www-data "${WWW_DIR}"
+chmod -R 755 "${WWW_DIR}"
+
+echo "✍️  Generando archivos del sitio (v2.0)..."
+
+# index.html (v2.0)
+cat > "${WWW_DIR}/index.html" <<HTML
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>${SITE_NAME} — Conectividad SSH</title>
+  <link rel="stylesheet" href="/assets/styles.css">
+  <link rel="stylesheet" href="/assets/aos.css">
+  <script defer src="/assets/particles.min.js"></script>
+  <script defer src="/assets/lottie.min.js"></script>
+  <script defer src="/assets/aos.js"></script>
+  <script defer src="/assets/app.js"></script>
+</head>
+<body>
+  <div id="particles-js" class="bg"></div>
+
+  <header class="nav" id="site-nav">
+    <div class="container nav-inner">
+      <div class="brand">${SITE_NAME}</div>
+      <nav class="menu">
+        <a href="#features">Características</a>
+        <a href="#demo">Demo</a>
+        <a href="#contact">Contacto</a>
+      </nav>
+      <button class="hamburger" id="hamburger" aria-label="Abrir menú">☰</button>
+    </div>
+  </header>
+
+  <main class="hero">
+    <div class="container hero-grid">
+      <div class="hero-text" data-aos="fade-up">
+        <h1>${HERO_TEXT}</h1>
+        <p class="lead">Plantilla estática con partículas, animaciones Lottie y un diseño moderno optimizado para velocidad.</p>
+        <div class="actions">
+          <a class="btn primary" href="mailto:${CONTACT}">Contáctame</a>
+          <a class="btn ghost" href="#features">Ver demo</a>
+        </div>
+      </div>
+      <div class="hero-visual" data-aos="fade-left">
+        <div id="lottie-container" aria-hidden="true"></div>
+      </div>
+    </div>
+  </main>
+
+  <section id="features" class="container features">
+    <h2 data-aos="fade-up">Características</h2>
+    <div class="features-grid">
+      <article class="feature-card" data-aos="fade-up" data-aos-delay="80">
+        <div class="icon">🎨</div>
+        <h3>Diseño Profesional</h3>
+        <p>Tipografías y espaciado optimizados para conversión y presentación.</p>
+      </article>
+      <article class="feature-card" data-aos="fade-up" data-aos-delay="160">
+        <div class="icon">⚙️</div>
+        <h3>Animaciones Lottie</h3>
+        <p>Animaciones vectoriales ligeras que elevan la experiencia visual.</p>
+      </article>
+      <article class="feature-card" data-aos="fade-up" data-aos-delay="240">
+        <div class="icon">🚀</div>
+        <h3>Rendimiento</h3>
+        <p>Listo para servir con Nginx y con buenas prácticas de cache.</p>
+      </article>
+    </div>
+  </section>
+
+  <section id="demo" class="container demo">
+    <h2 data-aos="fade-up">Vista previa</h2>
+    <div class="card" data-aos="fade-up" data-aos-delay="80">
+      <h4>Panel de ejemplo</h4>
+      <p>Layout atractivo para tu servicio con bloques editables y ejemplos de métricas.</p>
+    </div>
+  </section>
+
+  <footer id="contact" class="container footer" data-aos="fade-up">
+    <div>
+      <strong>Contacto</strong>
+      <p><a href="mailto:${CONTACT}">${CONTACT}</a></p>
+    </div>
+    <div>
+      <small>&copy; ${SITE_NAME} — ${SITE_NAME} v2.0</small>
+    </div>
+  </footer>
+
+  <script>
+    // smooth scroll for demo link
+    document.addEventListener('click', function(e){
+      if(e.target.matches('a[href^="#"]')){
+        var id = e.target.getAttribute('href');
+        if(id.length>1){
+          e.preventDefault();
+          document.querySelector(id).scrollIntoView({behavior:'smooth', block:'start'});
+        }
+      }
+    });
+  </script>
+</body>
+</html>
+HTML
+
+# styles.css (v2.0)
+mkdir -p "${WWW_DIR}/assets"
+cat > "${WWW_DIR}/assets/styles.css" <<'CSS'
+:root{
+  --bg:#071228;
+  --muted:#9fb6c9;
+  --accent:#1fb6ff;
+  --accent-2:#06b6d4;
+  --glass: rgba(255,255,255,0.03);
+  --card:#071b2a;
+}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0;font-family:Inter,system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial;}
+body{background:linear-gradient(180deg,#061226 0%, #071228 100%);color:#e6eef6;overflow-x:hidden}
+.container{max-width:1100px;margin:0 auto;padding:24px}
+.nav{position:fixed;left:0;right:0;top:0;z-index:60;transition:backdrop-filter 200ms, background 200ms}
+.nav-inner{display:flex;align-items:center;justify-content:space-between;padding:14px 24px}
+.brand{font-weight:800;font-size:20px;color:var(--accent)}
+.menu a{color:var(--muted);text-decoration:none;margin-left:20px;font-size:14px}
+.hamburger{display:none;background:transparent;border:0;color:var(--muted);font-size:20px}
+.hero{min-height:84vh;display:flex;align-items:center;padding-top:80px;position:relative;z-index:10}
+.hero-grid{display:grid;grid-template-columns:1fr 420px;gap:32px;align-items:center}
+.hero-text h1{font-size:42px;margin:0 0 12px;line-height:1.05}
+.lead{color:var(--muted);margin:0 0 18px}
+.actions{display:flex;gap:12px}
+.btn{display:inline-block;padding:12px 20px;border-radius:12px;text-decoration:none;font-weight:700}
+.btn.primary{background:linear-gradient(90deg,var(--accent),var(--accent-2));color:#001726}
+.btn.ghost{background:transparent;border:1px solid rgba(255,255,255,0.06);color:var(--muted)}
+.hero-visual{display:flex;align-items:center;justify-content:center}
+#lottie-container{width:320px;height:320px;border-radius:18px;display:flex;align-items:center;justify-content:center;box-shadow: 0 18px 40px rgba(2,6,23,0.6);background:linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));}
+
+/* features */
+.features{padding:60px 0}
+.features-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:20px}
+.feature-card{background:var(--card);padding:22px;border-radius:12px;box-shadow: 0 10px 30px rgba(2,6,23,0.6);min-height:120px}
+.feature-card .icon{font-size:28px;margin-bottom:8px}
+.demo{padding:40px 0}
+.card{background:linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));padding:24px;border-radius:14px;box-shadow: 0 12px 30px rgba(2,6,23,0.6)}
+.footer{display:flex;justify-content:space-between;align-items:center;padding:36px 0;color:var(--muted)}
+
+/* particles background */
+.bg{position:fixed;inset:0;z-index:1;pointer-events:none}
+
+/* sticky nav blur on scroll */
+.scrolled{backdrop-filter: blur(6px);background: rgba(2,6,23,0.35)}
+
+/* responsive */
+@media (max-width:900px){
+  .hero-grid{grid-template-columns:1fr; padding:100px 0}
+  #lottie-container{width:260px;height:260px;margin-top:18px}
+  .features-grid{grid-template-columns:1fr}
+  .menu{display:none}
+  .hamburger{display:block}
+}
+CSS
+
+# tiny local AOS (minimal CSS + small JS fallback)
+cat > "${WWW_DIR}/assets/aos.css" <<'CSS'
+/* Minimal subset of AOS styles for fade animations */
+[data-aos]{opacity:0;transition-property:opacity,transform;transition-duration:700ms;transform:translateY(12px)}
+[data-aos].aos-animated{opacity:1;transform:none}
+CSS
+
+cat > "${WWW_DIR}/assets/aos.js" <<'JS'
+/* Minimal AOS-like initializer: toggles .aos-animated when element enters viewport */
+(function(){
+  function onEntry(entries){ entries.forEach(function(e){ if(e.isIntersecting){ e.target.classList.add('aos-animated'); } }); }
+  var obs = new IntersectionObserver(onEntry, {threshold:0.12});
+  document.addEventListener('DOMContentLoaded',function(){
+    document.querySelectorAll('[data-aos]').forEach(function(el){ obs.observe(el); });
+  });
+})();
+JS
+
+# particles.min.js (small local implementation)
+cat > "${WWW_DIR}/assets/particles.min.js" <<'JS'
+/* Tiny particles background with mouse parallax */
+(function(){
+  function rand(n){ return Math.random()*n; }
+  function init(){
+    var container = document.getElementById('particles-js');
+    if(!container) return;
+    var frag = document.createDocumentFragment();
+    var w = container.offsetWidth, h = container.offsetHeight;
+    for(var i=0;i<60;i++){
+      var dot = document.createElement('div');
+      dot.className = 'p-dot';
+      dot.style.position='absolute';
+      var size = 1 + Math.floor(Math.random()*4);
+      dot.style.width = size + 'px';
+      dot.style.height = size + 'px';
+      dot.style.borderRadius='50%';
+      dot.style.background='rgba(31,182,255,'+(0.06+Math.random()*0.18)+')';
+      dot.style.left = (Math.random()*100)+'%';
+      dot.style.top = (Math.random()*100)+'%';
+      dot.style.transform='translate(-50%,-50%)';
+      frag.appendChild(dot);
+    }
+    container.appendChild(frag);
+    // simple floating animation via CSS
+    var style=document.createElement('style'); style.innerHTML='.p-dot{animation:pf 8s ease-in-out infinite}@keyframes pf{0%{transform:translateY(0)}50%{transform:translateY(-30px)}100%{transform:translateY(0)}}'; document.head.appendChild(style);
+    // parallax on mouse
+    document.addEventListener('mousemove', function(e){
+      var cx = window.innerWidth/2, cy = window.innerHeight/2;
+      var dx = (e.clientX - cx)/cx, dy = (e.clientY - cy)/cy;
+      document.querySelectorAll('.p-dot').forEach(function(d,i){
+        var mv = (i%6 + 1) * 2;
+        d.style.transform = 'translate('+(-50 + dx*mv)+'%,'+(-50 + dy*mv)+'%)';
+      });
+    });
+  }
+  window.addEventListener('load', init);
+})();
+JS
+
+# lottie.min.js minimal loader (will try to download runtime if missing)
+cat > "${WWW_DIR}/assets/lottie.min.js" <<'JS'
+/* Lottie loader: attempts to use CDN runtime; if not available, loads asynchronously */
+(function(){
+  function loadScript(url,cb){var s=document.createElement('script');s.src=url;s.onload=cb;document.head.appendChild(s);}
+  if(typeof lottie==='undefined'){
+    try{ loadScript('https://cdnjs.cloudflare.com/ajax/libs/bodymovin/5.7.11/lottie.min.js', function(){}); }catch(e){}
+  }
+})();
+JS
+
+# app.js (init particles, lottie, aos, navbar)
+cat > "${WWW_DIR}/assets/app.js" <<'JS'
+document.addEventListener('DOMContentLoaded', function(){
+  // init AOS-like (our minimal aos.js triggers based on data-aos)
+  // init particles: particles.min.js self-inits on load
+
+  // init Lottie (retry if not loaded immediately)
+  function startLottie(){
+    if(window.lottie){
+      try {
+        lottie.loadAnimation({
+          container: document.getElementById('lottie-container'),
+          renderer: 'svg',
+          loop: true,
+          autoplay: true,
+          path: 'https://assets10.lottiefiles.com/packages/lf20_touohxv0.json'
+        });
+      } catch(e){ console.warn('Lottie failed', e); }
+    } else {
+      setTimeout(startLottie, 800);
+    }
+  }
+  startLottie();
+
+  // hamburger menu
+  var ham = document.getElementById('hamburger');
+  ham && ham.addEventListener('click', function(){
+    var menu = document.querySelector('.menu');
+    if(menu) menu.style.display = (menu.style.display === 'flex') ? 'none' : 'flex';
+  });
+
+  // sticky nav blur on scroll
+  var nav = document.getElementById('site-nav');
+  window.addEventListener('scroll', function(){
+    if(window.scrollY > 30) nav.classList.add('scrolled'); else nav.classList.remove('scrolled');
+  });
+
+  // trigger AOS animation class manually for in-view elements (for compatibility)
+  document.querySelectorAll('[data-aos]').forEach(function(el){
+    // will be observed by our minimal IntersectionObserver in aos.js
+  });
+});
+JS
+
+# robots
+cat > "${WWW_DIR}/robots.txt" <<TXT
+User-agent: *
+Disallow:
+TXT
+
+# permissions
+chown -R www-data:www-data "${WWW_DIR}"
+chmod -R 755 "${WWW_DIR}"
+
+echo "🗜  Empaquetando el sitio como ${WWW_DIR}/site.zip ..."
+cd "${WWW_DIR}"
+# zip everything except site.zip itself (if exists)
+zip -r site.zip . -x site.zip > /dev/null 2>&1 || true
+cp site.zip /tmp/${SITE_NAME}_site.zip || true
+
+echo "🔐 Generando certificado SSL autofirmado..."
+SSL_DIR="/etc/ssl/${SITE_NAME}"
+mkdir -p "${SSL_DIR}"
+CERT_FILE="${SSL_DIR}/selfsigned.crt"
+KEY_FILE="${SSL_DIR}/selfsigned.key"
+
+# Generate openssl self-signed cert (2048 bits, 5 years)
+if [ ! -f "${CERT_FILE}" ] || [ ! -f "${KEY_FILE}" ]; then
+  openssl req -x509 -nodes -days 1825 -newkey rsa:2048 \
+    -subj "/CN=${SITE_NAME}" \
+    -keyout "${KEY_FILE}" -out "${CERT_FILE}" >/dev/null 2>&1 || true
+  chmod 600 "${KEY_FILE}"
+  chmod 644 "${CERT_FILE}"
+fi
+
+echo "🔧 Escribiendo configuración de Nginx para HTTP y HTTPS..."
+
+cat > "${NGINX_SITE}" <<NGINX
+server {
+    listen ${PORT_HTTP} default_server;
+    listen [::]:${PORT_HTTP} default_server;
+    server_name _;
+
+    root ${WWW_DIR};
+    index index.html;
+
+    access_log /var/log/nginx/${SITE_NAME}_access.log;
+    error_log  /var/log/nginx/${SITE_NAME}_error.log;
+
+    location / {
+        try_files \$uri \$uri/ =404;
+    }
+
+    location ~* \.(?:css|js|jpg|jpeg|gif|png|svg|ico|json|webp|zip)$ {
+        expires 7d;
+        add_header Cache-Control "public";
+    }
+}
+
+server {
+    listen ${PORT_HTTPS} ssl http2 default_server;
+    listen [::]:${PORT_HTTPS} ssl http2 default_server;
+    server_name _;
+
+    root ${WWW_DIR};
+    index index.html;
+
+    ssl_certificate ${CERT_FILE};
+    ssl_certificate_key ${KEY_FILE};
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers HIGH:!aNULL:!MD5;
+    add_header Strict-Transport-Security "max-age=63072000; includeSubDomains; preload" always;
+
+    access_log /var/log/nginx/${SITE_NAME}_access_ssl.log;
+    error_log  /var/log/nginx/${SITE_NAME}_error_ssl.log;
+
+    location / {
+        try_files \$uri \$uri/ =404;
+    }
+
+    location ~* \.(?:css|js|jpg|jpeg|gif|png|svg|ico|json|webp|zip)$ {
+        expires 7d;
+        add_header Cache-Control "public";
+    }
+}
+NGINX
+
+# enable site
+ln -sf "${NGINX_SITE}" /etc/nginx/sites-enabled/${SITE_NAME}
+
+# disable default
+if [ -f /etc/nginx/sites-enabled/default ]; then
+  rm -f /etc/nginx/sites-enabled/default
+fi
+
+echo "🔍 Probando configuración de Nginx..."
+nginx -t
+
+echo "🔁 Reiniciando y habilitando Nginx..."
+systemctl restart nginx
+systemctl enable nginx
+
+IP_ADDR="$(hostname -I 2>/dev/null | awk '{print $1}' || echo '127.0.0.1')"
+
+echo
+echo "✅ ReycodeSSH v2.0 instalado con éxito."
+echo "📂 Archivos desplegados en: ${WWW_DIR}"
+echo "📦 ZIP del sitio: ${WWW_DIR}/site.zip  (copia en /tmp/${SITE_NAME}_site.zip)"
+echo "🔐 Certificado autofirmado: ${CERT_FILE}"
+echo
+echo "Abre en tu navegador:"
+echo "  http://${IP_ADDR}/"
+echo "  https://${IP_ADDR}/  (certificado autofirmado — tu navegador mostrará advertencia de seguridad)"
+echo
+echo "Si querés que en el futuro gestione Let's Encrypt (certificado válido con dominio), dime el dominio y lo agrego."
+echo
+echo "Soporte / contacto: ${CONTACT}"
+echo
+exit 0
