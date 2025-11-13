@@ -1,85 +1,96 @@
 #!/bin/bash
-# =========================================================
-# 🚀 Instalador ReycodeSSH v4 - Sitio Web Neumórfico
-# =========================================================
-# Creado por ChatGPT (v4 Installer)
-# Fecha: $(date +%Y-%m-%d)
-# =========================================================
+# =============================================
+#  ReycodeSSH v4.1 Installer (Apache + HTML)
+#  by Venenorks
+# =============================================
 
 ZIP_URL="https://github.com/RmXF/Dev/raw/main/ReycodeSSH_v4.zip"
-INSTALL_DIR="/var/www/html/ReycodeSSH_v4"
-TEMP_FILE="/tmp/ReycodeSSH_v4.zip"
+WEB_DIR="/var/www/reycodessh"
+CONF_FILE="/etc/apache2/sites-available/reycodessh.conf"
 
-# Colores
+# --- Colors ---
 GREEN="\e[32m"
-RED="\e[31m"
 YELLOW="\e[33m"
-BLUE="\e[36m"
+RED="\e[31m"
 RESET="\e[0m"
 
+function progress() {
+    local message=$1
+    echo -ne "${YELLOW}[⚙️] ${message}...${RESET}"
+    sleep 0.5
+    echo -e " ${GREEN}OK${RESET}"
+}
+
 clear
-echo -e "${BLUE}===========================================================${RESET}"
-echo -e "${GREEN}      🚀 Instalador Automático - ReycodeSSH v4${RESET}"
-echo -e "${BLUE}===========================================================${RESET}"
-echo ""
+echo -e "${GREEN}"
+echo "==============================================="
+echo "   🚀 Instalador ReycodeSSH v4.1 (Apache)"
+echo "==============================================="
+echo -e "${RESET}"
 
-sleep 1
-
-# Verificar root
+# --- Root check ---
 if [[ $EUID -ne 0 ]]; then
-  echo -e "${RED}[✖] Debes ejecutar este script como root.${RESET}"
-  exit 1
+    echo -e "${RED}❌ Este script debe ejecutarse como root${RESET}"
+    exit 1
 fi
 
-# Paso 1: Actualización del sistema
-echo -e "${YELLOW}[…] Actualizando el sistema...${RESET}"
-apt-get update -y &>/dev/null
-echo -e "${GREEN}[✔] Sistema actualizado.${RESET}"
+# --- Update system ---
+progress "Actualizando paquetes del sistema"
+apt update -y &>/dev/null
+apt upgrade -y &>/dev/null
 
-# Paso 2: Instalación de dependencias
-echo -e "${YELLOW}[…] Instalando dependencias necesarias...${RESET}"
-apt-get install -y unzip wget apache2 &>/dev/null
-echo -e "${GREEN}[✔] Dependencias instaladas.${RESET}"
+# --- Install dependencies ---
+progress "Instalando dependencias necesarias"
+apt install -y apache2 unzip curl wget ufw &>/dev/null
 
-# Paso 3: Descarga del sitio web
-echo -e "${YELLOW}[…] Descargando el paquete del sitio web...${RESET}"
-wget -O "$TEMP_FILE" "$ZIP_URL" &>/dev/null
-if [[ $? -ne 0 ]]; then
-  echo -e "${RED}[✖] Error al descargar el archivo ZIP.${RESET}"
-  exit 1
-fi
-echo -e "${GREEN}[✔] Descarga completada.${RESET}"
+# --- Download ZIP ---
+progress "Descargando sitio web ReycodeSSH v4"
+wget -O /tmp/ReycodeSSH_v4.zip "$ZIP_URL" &>/dev/null
 
-# Paso 4: Extracción del sitio
-echo -e "${YELLOW}[…] Descomprimiendo el sitio...${RESET}"
-unzip -o "$TEMP_FILE" -d "$INSTALL_DIR" &>/dev/null
-if [[ $? -ne 0 ]]; then
-  echo -e "${RED}[✖] Error al descomprimir el archivo.${RESET}"
-  exit 1
-fi
-echo -e "${GREEN}[✔] Archivos extraídos en $INSTALL_DIR.${RESET}"
+# --- Unzip and move site ---
+progress "Descomprimiendo sitio"
+rm -rf "$WEB_DIR"
+mkdir -p "$WEB_DIR"
+unzip /tmp/ReycodeSSH_v4.zip -d "$WEB_DIR" &>/dev/null
 
-# Paso 5: Permisos
-echo -e "${YELLOW}[…] Configurando permisos...${RESET}"
-chown -R www-data:www-data "$INSTALL_DIR"
-chmod -R 755 "$INSTALL_DIR"
-echo -e "${GREEN}[✔] Permisos configurados.${RESET}"
+# --- Set permissions ---
+progress "Configurando permisos"
+chown -R www-data:www-data "$WEB_DIR"
+chmod -R 755 "$WEB_DIR"
 
-# Paso 6: Limpieza
-echo -e "${YELLOW}[…] Limpiando archivos temporales...${RESET}"
-rm -f "$TEMP_FILE"
-echo -e "${GREEN}[✔] Limpieza completada.${RESET}"
+# --- Apache configuration ---
+progress "Configurando Apache"
+cat > "$CONF_FILE" <<EOF
+<VirtualHost *:80>
+    ServerAdmin admin@localhost
+    DocumentRoot $WEB_DIR
+    <Directory $WEB_DIR>
+        Options Indexes FollowSymLinks
+        AllowOverride All
+        Require all granted
+    </Directory>
+    ErrorLog \${APACHE_LOG_DIR}/reycodessh_error.log
+    CustomLog \${APACHE_LOG_DIR}/reycodessh_access.log combined
+</VirtualHost>
+EOF
 
-# Paso 7: Reiniciar Apache
-echo -e "${YELLOW}[…] Reiniciando servicio Apache...${RESET}"
-systemctl restart apache2
-echo -e "${GREEN}[✔] Apache reiniciado correctamente.${RESET}"
+# --- Enable site ---
+a2dissite 000-default.conf &>/dev/null
+a2ensite reycodessh.conf &>/dev/null
+systemctl reload apache2
 
-echo ""
-echo -e "${BLUE}===========================================================${RESET}"
-echo -e "${GREEN} ✅ Instalación completada exitosamente.${RESET}"
-echo -e "${YELLOW} 🌐 Accede al sitio en:${RESET} http://localhost/ReycodeSSH_v4"
-echo -e "${BLUE}===========================================================${RESET}"
-echo ""
+# --- Firewall rules ---
+progress "Configurando firewall (puerto 80)"
+ufw allow 80/tcp &>/dev/null
+ufw reload &>/dev/null
 
-exit 0
+# --- Cleanup ---
+progress "Limpiando archivos temporales"
+rm -f /tmp/ReycodeSSH_v4.zip
+
+# --- Detect IP ---
+SERVER_IP=$(curl -s ifconfig.me || hostname -I | awk '{print $1}')
+
+# --- Done ---
+echo -e "\n${GREEN}✅ Instalación completada exitosamente.${RESET}"
+echo -e "🌍 Tu sitio está disponible en: ${YELLOW}http://$SERVER_IP${RESET}\n"
