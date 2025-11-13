@@ -1,0 +1,653 @@
+#!/usr/bin/env bash
+# install_reycodessh_v3.sh
+# ReycodeSSH v3 - instalador todo-en-uno (sitio estático, Nginx, SSL autofirmado, Brotli precompress)
+# Compatible: Ubuntu 18.04+ / Debian 9+
+set -euo pipefail
+
+SITE_NAME="ReycodeSSH"
+WWW_DIR="/var/www/${SITE_NAME}"
+NGINX_SITE="/etc/nginx/sites-available/${SITE_NAME}"
+MANAGE_BIN="/usr/local/bin/reycode-manage"
+PORT_HTTP=80
+PORT_HTTPS=443
+CONTACT="venenorks@gmail.com"
+HERO_TEXT="Conectividad inteligente para todos tus servidores SSH"
+THEME_COLOR="azul oscuro"
+SW_ENABLED=false   # service worker (PWA) initial state; can be enabled via manage tool
+
+# helper
+die(){ echo "ERROR: $*"; exit 1; }
+
+if [ "$(id -u)" -ne 0 ]; then
+  die "Ejecuta este script como root o con sudo: sudo bash install_reycodessh_v3.sh"
+fi
+
+echo
+echo "🔰 ReycodeSSH v3 - instalador (iniciando)"
+echo "Tema: ${THEME_COLOR}"
+echo "Hero: ${HERO_TEXT}"
+echo
+
+export DEBIAN_FRONTEND=noninteractive
+
+echo "📦 Actualizando repositorios..."
+apt-get update -y
+
+echo "📥 Instalando paquetes necesarios: nginx, unzip, openssl, curl, brotli, zip"
+# brotli package provides 'brotli' binary for precompressing. On Debian/Ubuntu it's 'brotli'
+apt-get install -y nginx unzip openssl curl ca-certificates brotli zip
+
+echo "🗂 Creando directorio del sitio en ${WWW_DIR}..."
+mkdir -p "${WWW_DIR}"
+chown -R www-data:www-data "${WWW_DIR}"
+chmod -R 755 "${WWW_DIR}"
+
+echo "✍️  Generando archivos del sitio (v3)..."
+
+# ---------------------------
+# INDEX (HTML)
+# ---------------------------
+cat > "${WWW_DIR}/index.html" <<HTML
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>${SITE_NAME} — Conectividad SSH</title>
+  <meta name="description" content="Conectividad inteligente para todos tus servidores SSH. ReycodeSSH — soluciones rápidas y profesionales.">
+  <meta property="og:title" content="${SITE_NAME} — Conectividad SSH">
+  <meta property="og:description" content="Conectividad inteligente para todos tus servidores SSH">
+  <meta property="og:type" content="website">
+  <link rel="manifest" href="/manifest.json">
+  <link rel="icon" href="/assets/favicon.png">
+  <link rel="preload" href="/assets/styles.css" as="style">
+  <link rel="stylesheet" href="/assets/styles.css">
+  <link rel="stylesheet" href="/assets/aos.css">
+  <script defer src="/assets/particles.min.js"></script>
+  <script defer src="/assets/lottie.min.js"></script>
+  <script defer src="/assets/aos.js"></script>
+  <script defer src="/assets/app.js"></script>
+</head>
+<body>
+  <div id="particles-js" class="bg" aria-hidden="true"></div>
+
+  <header class="nav" id="site-nav" role="banner">
+    <div class="container nav-inner">
+      <div class="brand" aria-label="${SITE_NAME}">${SITE_NAME}</div>
+      <nav class="menu" role="navigation" aria-label="Main menu">
+        <a href="#features">Características</a>
+        <a href="#demo">Demo</a>
+        <a href="#contact">Contacto</a>
+      </nav>
+      <button class="hamburger" id="hamburger" aria-label="Abrir menú">☰</button>
+    </div>
+  </header>
+
+  <main class="hero" role="main">
+    <div class="container hero-grid">
+      <div class="hero-text" data-aos="fade-up">
+        <h1>${HERO_TEXT}</h1>
+        <p class="lead">Plantilla estática optimizada con partículas, Lottie, AOS y mejoras de rendimiento (Brotli + gzip).</p>
+        <div class="actions">
+          <a class="btn primary" href="mailto:${CONTACT}">Contáctame</a>
+          <a class="btn ghost" href="#features">Ver demo</a>
+        </div>
+      </div>
+      <div class="hero-visual" data-aos="fade-left">
+        <div id="lottie-container" aria-hidden="true" role="img"></div>
+      </div>
+    </div>
+  </main>
+
+  <section id="features" class="container features" aria-labelledby="features-heading">
+    <h2 id="features-heading" data-aos="fade-up">Características</h2>
+    <div class="features-grid">
+      <article class="feature-card" data-aos="fade-up" data-aos-delay="80">
+        <div class="icon">🎨</div>
+        <h3>Diseño Profesional</h3>
+        <p>Tipografías y espaciado optimizados para conversión y presentación.</p>
+      </article>
+      <article class="feature-card" data-aos="fade-up" data-aos-delay="160">
+        <div class="icon">⚙️</div>
+        <h3>Animaciones Lottie</h3>
+        <p>Animaciones vectoriales ligeras que elevan la experiencia visual.</p>
+      </article>
+      <article class="feature-card" data-aos="fade-up" data-aos-delay="240">
+        <div class="icon">🚀</div>
+        <h3>Rendimiento</h3>
+        <p>Precompresión Brotli/Gzip, cache y recursos optimizados para LCP bajo.</p>
+      </article>
+    </div>
+  </section>
+
+  <section id="demo" class="container demo">
+    <h2 data-aos="fade-up">Vista previa</h2>
+    <div class="card" data-aos="fade-up" data-aos-delay="80">
+      <h4>Panel de ejemplo</h4>
+      <p>Ejemplo de layout para tu panel administrativo o landing de servicio.</p>
+    </div>
+  </section>
+
+  <footer id="contact" class="container footer" data-aos="fade-up">
+    <div>
+      <strong>Contacto</strong>
+      <p><a href="mailto:${CONTACT}">${CONTACT}</a></p>
+    </div>
+    <div>
+      <small>&copy; ${SITE_NAME} — 2025</small>
+    </div>
+  </footer>
+
+  <script>
+    // smooth scroll
+    document.addEventListener('click', function(e){
+      if(e.target.matches('a[href^="#"]')){
+        var id = e.target.getAttribute('href');
+        if(id.length>1){
+          e.preventDefault();
+          document.querySelector(id).scrollIntoView({behavior:'smooth', block:'start'});
+        }
+      }
+    });
+    // register service worker (if enabled by server)
+    if('serviceWorker' in navigator){
+      navigator.serviceWorker.getRegistrations().then(function(regs){
+        // don't auto-register here; server will serve /service-worker.js only if PWA enabled
+      }).catch(()=>{});
+    }
+  </script>
+</body>
+</html>
+HTML
+
+# ---------------------------
+# STYLES
+# ---------------------------
+mkdir -p "${WWW_DIR}/assets"
+cat > "${WWW_DIR}/assets/styles.css" <<'CSS'
+:root{
+  --bg:#071228;
+  --muted:#9fb6c9;
+  --accent:#1fb6ff;
+  --accent-2:#06b6d4;
+  --glass: rgba(255,255,255,0.03);
+  --card:#071b2a;
+  --maxw:1100px;
+}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0;font-family:Inter,system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial;}
+body{background:linear-gradient(180deg,#061226 0%, #071228 100%);color:#e6eef6;overflow-x:hidden}
+.container{max-width:var(--maxw);margin:0 auto;padding:24px}
+.nav{position:fixed;left:0;right:0;top:0;z-index:60;transition:backdrop-filter 200ms, background 200ms}
+.nav-inner{display:flex;align-items:center;justify-content:space-between;padding:14px 24px}
+.brand{font-weight:800;font-size:20px;color:var(--accent)}
+.menu a{color:var(--muted);text-decoration:none;margin-left:20px;font-size:14px}
+.hamburger{display:none;background:transparent;border:0;color:var(--muted);font-size:20px}
+.hero{min-height:84vh;display:flex;align-items:center;padding-top:80px;position:relative;z-index:10}
+.hero-grid{display:grid;grid-template-columns:1fr 420px;gap:32px;align-items:center}
+.hero-text h1{font-size:42px;margin:0 0 12px;line-height:1.05}
+.lead{color:var(--muted);margin:0 0 18px}
+.actions{display:flex;gap:12px}
+.btn{display:inline-block;padding:12px 20px;border-radius:12px;text-decoration:none;font-weight:700;border:0;cursor:pointer}
+.btn.primary{background:linear-gradient(90deg,var(--accent),var(--accent-2));color:#001726}
+.btn.ghost{background:transparent;border:1px solid rgba(255,255,255,0.06);color:var(--muted)}
+.hero-visual{display:flex;align-items:center;justify-content:center}
+#lottie-container{width:320px;height:320px;border-radius:18px;display:flex;align-items:center;justify-content:center;box-shadow: 0 18px 40px rgba(2,6,23,0.6);background:linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));}
+
+/* features */
+.features{padding:60px 0}
+.features-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:20px}
+.feature-card{background:var(--card);padding:22px;border-radius:12px;box-shadow: 0 10px 30px rgba(2,6,23,0.6);min-height:120px}
+.feature-card .icon{font-size:28px;margin-bottom:8px}
+.demo{padding:40px 0}
+.card{background:linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));padding:24px;border-radius:14px;box-shadow: 0 12px 30px rgba(2,6,23,0.6)}
+.footer{display:flex;justify-content:space-between;align-items:center;padding:36px 0;color:var(--muted)}
+
+/* particles background */
+.bg{position:fixed;inset:0;z-index:1;pointer-events:none}
+
+/* sticky nav blur on scroll */
+.scrolled{backdrop-filter: blur(6px);background: rgba(2,6,23,0.35)}
+
+/* responsive */
+@media (max-width:900px){
+  .hero-grid{grid-template-columns:1fr; padding:100px 0}
+  #lottie-container{width:260px;height:260px;margin-top:18px}
+  .features-grid{grid-template-columns:1fr}
+  .menu{display:none}
+  .hamburger{display:block}
+}
+CSS
+
+# ---------------------------
+# Minimal AOS (css + js)
+# ---------------------------
+cat > "${WWW_DIR}/assets/aos.css" <<'CSS'
+/* Minimal AOS-like CSS */
+[data-aos]{opacity:0;transition-property:opacity,transform;transition-duration:700ms;transform:translateY(12px)}
+[data-aos].aos-animated{opacity:1;transform:none}
+CSS
+
+cat > "${WWW_DIR}/assets/aos.js" <<'JS'
+(function(){
+  function onEntry(entries){ entries.forEach(function(e){ if(e.isIntersecting){ e.target.classList.add('aos-animated'); } }); }
+  var obs = new IntersectionObserver(onEntry, {threshold:0.12});
+  document.addEventListener('DOMContentLoaded',function(){ document.querySelectorAll('[data-aos]').forEach(function(el){ obs.observe(el); }); });
+})();
+JS
+
+# ---------------------------
+# Particles (tiny local implementation with parallax)
+# ---------------------------
+cat > "${WWW_DIR}/assets/particles.min.js" <<'JS'
+(function(){
+  function init(){
+    var container = document.getElementById('particles-js');
+    if(!container) return;
+    for(var i=0;i<80;i++){
+      var d=document.createElement('div');
+      d.className='p-dot';
+      var s=1+Math.random()*4;
+      d.style.width=s+'px'; d.style.height=s+'px';
+      d.style.position='absolute'; d.style.borderRadius='50%';
+      d.style.background='rgba(31,182,255,'+(0.05+Math.random()*0.18)+')';
+      d.style.left=(Math.random()*100)+'%'; d.style.top=(Math.random()*100)+'%';
+      d.style.transform='translate(-50%,-50%)';
+      container.appendChild(d);
+    }
+    var style=document.createElement('style'); style.innerHTML='.p-dot{animation:pf 9s ease-in-out infinite}@keyframes pf{0%{transform:translateY(0)}50%{transform:translateY(-30px)}100%{transform:translateY(0)}}'; document.head.appendChild(style);
+    document.addEventListener('mousemove', function(e){
+      var cx=window.innerWidth/2, cy=window.innerHeight/2;
+      var dx=(e.clientX-cx)/cx, dy=(e.clientY-cy)/cy;
+      document.querySelectorAll('.p-dot').forEach(function(p,i){
+        var mv = (i%8+1)*1.6;
+        p.style.transform = 'translate('+(-50 + dx*mv)+'%,'+(-50 + dy*mv)+'%)';
+      });
+    });
+  }
+  window.addEventListener('load', init);
+})();
+JS
+
+# ---------------------------
+# Lottie loader (minimal; attempts CDN)
+# ---------------------------
+cat > "${WWW_DIR}/assets/lottie.min.js" <<'JS'
+(function(){
+  function load(url,cb){var s=document.createElement('script');s.src=url;s.onload=cb;document.head.appendChild(s);}
+  if(typeof lottie==='undefined'){
+    try{ load('https://cdnjs.cloudflare.com/ajax/libs/bodymovin/5.7.11/lottie.min.js', function(){}); }catch(e){}
+  }
+})();
+JS
+
+# ---------------------------
+# APP JS (init AOS, Lottie, nav, etc)
+# ---------------------------
+cat > "${WWW_DIR}/assets/app.js" <<'JS'
+document.addEventListener('DOMContentLoaded', function(){
+  // Lottie init (retry if needed)
+  function startLottie(){
+    if(window.lottie){
+      try {
+        lottie.loadAnimation({
+          container: document.getElementById('lottie-container'),
+          renderer: 'svg',
+          loop: true,
+          autoplay: true,
+          path: 'https://assets10.lottiefiles.com/packages/lf20_touohxv0.json'
+        });
+      } catch(e){ console.warn('Lottie failed', e); }
+    } else {
+      setTimeout(startLottie, 700);
+    }
+  }
+  startLottie();
+
+  // hamburger menu
+  var ham = document.getElementById('hamburger');
+  ham && ham.addEventListener('click', function(){
+    var menu = document.querySelector('.menu');
+    if(menu) menu.style.display = (menu.style.display === 'flex') ? 'none' : 'flex';
+  });
+
+  // sticky nav blur on scroll
+  var nav = document.getElementById('site-nav');
+  window.addEventListener('scroll', function(){
+    if(window.scrollY > 30) nav.classList.add('scrolled'); else nav.classList.remove('scrolled');
+  });
+});
+JS
+
+# ---------------------------
+# Manifest & Service Worker (PWA optional)
+# ---------------------------
+cat > "${WWW_DIR}/manifest.json" <<JSON
+{
+  "name": "${SITE_NAME}",
+  "short_name": "${SITE_NAME}",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#071228",
+  "theme_color": "#1fb6ff",
+  "icons": [
+    { "src": "/assets/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/assets/icon-512.png", "sizes": "512x512", "type": "image/png" }
+  ]
+}
+JSON
+
+cat > "${WWW_DIR}/service-worker.js" <<'JS'
+/* Minimal service worker for offline caching - will be served only if enabled */
+const CACHE_NAME = 'reycode-shell-v3';
+const ASSETS = [
+  '/',
+  '/index.html',
+  '/assets/styles.css',
+  '/assets/app.js',
+  '/assets/aos.css',
+  '/assets/aos.js'
+];
+self.addEventListener('install', (e) => {
+  e.waitUntil(caches.open(CACHE_NAME).then(cache => cache.addAll(ASSETS)));
+});
+self.addEventListener('fetch', (e) => {
+  e.respondWith(caches.match(e.request).then(r => r || fetch(e.request)));
+});
+JS
+
+# ---------------------------
+# Icons & favicon (simple generated PNG placeholders)
+# ---------------------------
+# We'll create small placeholder PNGs using base64-encoded tiny images (1x1 svg converted)
+cat > "${WWW_DIR}/assets/favicon.png" <<'PNG'
+iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAQAAAC1+jfqAAAAK0lEQVR4AWMYVGBgYGBg+M8w/4ZGBgYGBg+P8f/0P4H4gqgAqJQAK8QwBzOY5mYAAAAASUVORK5CYII=
+PNG
+# Because embedding arbitrary binary here may break shells, we will create small PNGs by decoding base64 later via a simple mechanism below.
+
+# ---------------------------
+# robots & sitemap & visits.json
+# ---------------------------
+cat > "${WWW_DIR}/robots.txt" <<TXT
+User-agent: *
+Disallow:
+Sitemap: /sitemap.xml
+TXT
+
+cat > "${WWW_DIR}/sitemap.xml" <<XML
+<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url><loc>/</loc></url>
+</urlset>
+XML
+
+# visits.json minimal for client-side counting
+echo '{"visits":0}' > "${WWW_DIR}/visits.json"
+chmod 664 "${WWW_DIR}/visits.json"
+
+# ---------------------------
+# Create tiny PNG placeholders by decoding base64 (safe small images)
+# ---------------------------
+# 1x1 transparent PNG base64
+cat > /tmp/reycode_icon_base64.txt <<'BASE64'
+iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGNgYAAAAAMAASsJTYQAAAAASUVORK5CYII=
+BASE64
+base64 -d /tmp/reycode_icon_base64.txt > "${WWW_DIR}/assets/icon-192.png" || true
+base64 -d /tmp/reycode_icon_base64.txt > "${WWW_DIR}/assets/icon-512.png" || true
+base64 -d /tmp/reycode_icon_base64.txt > "${WWW_DIR}/assets/favicon.png" || true
+rm -f /tmp/reycode_icon_base64.txt
+
+# ---------------------------
+# Security headers snippet to include in nginx config
+# ---------------------------
+SECURITY_HEADERS="add_header X-Frame-Options \"SAMEORIGIN\" always;
+add_header X-Content-Type-Options \"nosniff\" always;
+add_header Referrer-Policy \"no-referrer-when-downgrade\" always;
+add_header X-XSS-Protection \"1; mode=block\" always;"
+
+# ---------------------------
+# Precompress static assets (create .gz and .br files)
+# ---------------------------
+echo "🧰 Precomprimiendo assets (gzip + brotli) para mejor rendimiento..."
+cd "${WWW_DIR}"
+# ensure files to compress exist
+find . -type f -name "*.css" -or -name "*.js" -or -name "*.html" -or -name "*.json" | while read -r f; do
+  # gzip
+  gzip -k -9 -f "$f" > /dev/null 2>&1 || true
+  # brotli (.br)
+  brotli -f -q 9 -o "${f}.br" "$f" >/dev/null 2>&1 || true
+done
+
+# For images we won't compress here (they are tiny placeholders)
+
+# ---------------------------
+# Create site.zip backup
+# ---------------------------
+echo "🗜  Empaquetando sitio en ${WWW_DIR}/site.zip ..."
+cd "${WWW_DIR}"
+zip -r site.zip . -x site.zip > /dev/null 2>&1 || true
+cp site.zip /tmp/${SITE_NAME}_site.zip || true
+
+# ---------------------------
+# Generate self-signed cert
+# ---------------------------
+echo "🔐 Generando certificado SSL autofirmado..."
+SSL_DIR="/etc/ssl/${SITE_NAME}"
+mkdir -p "${SSL_DIR}"
+CERT_FILE="${SSL_DIR}/selfsigned.crt"
+KEY_FILE="${SSL_DIR}/selfsigned.key"
+
+if [ ! -f "${CERT_FILE}" ] || [ ! -f "${KEY_FILE}" ]; then
+  openssl req -x509 -nodes -days 1825 -newkey rsa:2048 \
+    -subj "/CN=${SITE_NAME}" \
+    -keyout "${KEY_FILE}" -out "${CERT_FILE}" >/dev/null 2>&1 || true
+  chmod 600 "${KEY_FILE}"
+  chmod 644 "${CERT_FILE}"
+fi
+
+# ---------------------------
+# Write Nginx config (HTTP + HTTPS + precompressed serving + security headers)
+# ---------------------------
+echo "🔧 Escribiendo configuración de Nginx en ${NGINX_SITE} ..."
+cat > "${NGINX_SITE}" <<NGINX
+# ReycodeSSH v3 nginx site
+server {
+    listen ${PORT_HTTP} default_server;
+    listen [::]:${PORT_HTTP} default_server;
+    server_name _;
+
+    root ${WWW_DIR};
+    index index.html;
+
+    # Redirect all to https
+    return 301 https://\$host\$request_uri;
+}
+
+server {
+    listen ${PORT_HTTPS} ssl http2 default_server;
+    listen [::]:${PORT_HTTPS} ssl http2 default_server;
+    server_name _;
+
+    root ${WWW_DIR};
+    index index.html;
+
+    ssl_certificate ${CERT_FILE};
+    ssl_certificate_key ${KEY_FILE};
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers HIGH:!aNULL:!MD5;
+    ssl_prefer_server_ciphers on;
+
+    # Security headers
+    ${SECURITY_HEADERS}
+    add_header Strict-Transport-Security "max-age=15768000" always;
+
+    access_log /var/log/nginx/${SITE_NAME}_access.log;
+    error_log /var/log/nginx/${SITE_NAME}_error.log;
+
+    # Serve precompressed files if available
+    gzip on;
+    gzip_vary on;
+    gzip_proxied any;
+    gzip_types text/plain text/css application/javascript application/json application/manifest+json image/svg+xml;
+    gzip_comp_level 6;
+
+    # try brotli (.br) then gzip (.gz) then original
+    location ~* \.(?:css|js|json|html|svg|xml)$ {
+        add_header Vary Accept-Encoding;
+        if (\$http_accept_encoding ~* "br") {
+            try_files \$uri.br \$uri =404;
+        }
+        if (\$http_accept_encoding !~* "br") {
+            try_files \$uri.gz \$uri =404;
+        }
+        try_files \$uri =404;
+    }
+
+    # static files
+    location /assets/ {
+        try_files \$uri \$uri/ =404;
+        access_log off;
+        expires 30d;
+        add_header Cache-Control "public, max-age=2592000";
+    }
+
+    # service worker (only serve if file exists)
+    location = /service-worker.js { try_files /service-worker.js =404; add_header Cache-Control "no-cache"; }
+
+    # root and fallback
+    location / {
+        try_files \$uri \$uri/ /index.html;
+    }
+}
+NGINX
+
+# enable site
+ln -sf "${NGINX_SITE}" /etc/nginx/sites-enabled/${SITE_NAME}
+
+# disable default
+if [ -f /etc/nginx/sites-enabled/default ]; then
+  rm -f /etc/nginx/sites-enabled/default
+fi
+
+echo "🔍 Probando configuración de Nginx..."
+nginx -t
+
+echo "🔁 Reiniciando y habilitando Nginx..."
+systemctl restart nginx
+systemctl enable nginx
+
+# ---------------------------
+# reycode-manage tool
+# ---------------------------
+cat > "${MANAGE_BIN}" <<'BASH'
+#!/usr/bin/env bash
+# reycode-manage - herramienta de mantenimiento para ReycodeSSH v3
+set -euo pipefail
+SITE_DIR="/var/www/ReycodeSSH"
+SSL_DIR="/etc/ssl/ReycodeSSH"
+CERT="${SSL_DIR}/selfsigned.crt"
+KEY="${SSL_DIR}/selfsigned.key"
+
+usage(){
+  cat <<EOF
+Reycode-manage - comandos:
+  --renew-cert       Regenerar certificado autofirmado
+  --backup           Crear backup (site.zip) en /tmp
+  --update-site      Re-empaqueta site.zip (zip) desde archivos actuales
+  --enable-pwa       Habilitar PWA (crea service-worker.js if missing)
+  --disable-pwa      Deshabilitar PWA (remueve service-worker.js)
+  --uninstall        Elimina site (usa con precaución)
+EOF
+}
+
+if [ $# -lt 1 ]; then usage; exit 0; fi
+
+case "$1" in
+  --renew-cert)
+    echo "Regenerando certificado autofirmado..."
+    mkdir -p "${SSL_DIR}"
+    openssl req -x509 -nodes -days 1825 -newkey rsa:2048 -subj "/CN=ReycodeSSH" -keyout "${KEY}" -out "${CERT}"
+    chmod 600 "${KEY}"
+    chmod 644 "${CERT}"
+    systemctl restart nginx
+    echo "Certificado regenerado."
+    ;;
+  --backup)
+    echo "Creando backup site.zip en /tmp..."
+    cd "${SITE_DIR}"
+    zip -r /tmp/ReycodeSSH_backup_\$(date +%Y%m%d_%H%M%S).zip . -x site.zip > /dev/null 2>&1 || true
+    echo "Backup creado."
+    ;;
+  --update-site)
+    echo "Actualizando site.zip..."
+    cd "${SITE_DIR}"
+    zip -r site.zip . -x site.zip > /dev/null 2>&1 || true
+    echo "site.zip actualizado."
+    ;;
+  --enable-pwa)
+    echo "Habilitando PWA: se asegura service-worker.js presente."
+    if [ ! -f "${SITE_DIR}/service-worker.js" ]; then
+      cat > "${SITE_DIR}/service-worker.js" <<'SW'
+/* Minimal service worker (auto-enabled) */
+const CACHE_NAME = 'reycode-shell-v3';
+const ASSETS = ['/', '/index.html', '/assets/styles.css', '/assets/app.js'];
+self.addEventListener('install', e => e.waitUntil(caches.open(CACHE_NAME).then(c => c.addAll(ASSETS))));
+self.addEventListener('fetch', e => e.respondWith(caches.match(e.request).then(r => r || fetch(e.request))));
+SW
+      echo "service-worker.js creado."
+    else
+      echo "service-worker.js ya existe."
+    fi
+    systemctl restart nginx
+    ;;
+  --disable-pwa)
+    echo "Deshabilitando PWA: removiendo service-worker.js"
+    rm -f "${SITE_DIR}/service-worker.js" || true
+    systemctl restart nginx
+    ;;
+  --uninstall)
+    echo "Eliminar sitio y configuración? (escribe YES para confirmar)"
+    read -r ans
+    if [ "$ans" = "YES" ]; then
+      systemctl stop nginx || true
+      rm -rf "${SITE_DIR}"
+      rm -f "${NGINX_SITE}" /etc/nginx/sites-enabled/ReycodeSSH
+      systemctl restart nginx || true
+      echo "Sitio eliminado."
+    else
+      echo "Abortado."
+    fi
+    ;;
+  *)
+    usage
+    ;;
+esac
+BASH
+
+chmod 755 "${MANAGE_BIN}"
+
+# ---------------------------
+# Final messages
+# ---------------------------
+IP_ADDR="$(hostname -I 2>/dev/null | awk '{print $1}' || echo '127.0.0.1')"
+
+echo
+echo "✅ ReycodeSSH v3 instalado con éxito."
+echo "📂 Archivos desplegados en: ${WWW_DIR}"
+echo "📦 ZIP del sitio: ${WWW_DIR}/site.zip   (copia en /tmp/ReycodeSSH_site.zip)"
+echo "🔐 Certificado autofirmado: ${CERT_FILE}"
+echo
+echo "Accesos:"
+echo "  http://${IP_ADDR}/  (redirigirá a HTTPS)"
+echo "  https://${IP_ADDR}/  (autofirmado — navegador mostrará advertencia)"
+echo
+echo "Mantenimiento:"
+echo "  reycode-manage --backup"
+echo "  reycode-manage --renew-cert"
+echo "  reycode-manage --update-site"
+echo "  reycode-manage --enable-pwa"
+echo "  reycode-manage --disable-pwa"
+echo
+echo "Soporte / contacto: ${CONTACT}"
+echo
+exit 0
