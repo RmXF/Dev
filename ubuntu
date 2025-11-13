@@ -1,0 +1,85 @@
+#!/bin/bash
+# =========================================================
+# 🚀 Instalador ReycodeSSH v4 - Sitio Web Neumórfico
+# =========================================================
+# Creado por ChatGPT (v4 Installer)
+# Fecha: $(date +%Y-%m-%d)
+# =========================================================
+
+ZIP_URL="https://github.com/RmXF/Dev/raw/main/ReycodeSSH_v4.zip"
+INSTALL_DIR="/var/www/html/ReycodeSSH_v4"
+TEMP_FILE="/tmp/ReycodeSSH_v4.zip"
+
+# Colores
+GREEN="\e[32m"
+RED="\e[31m"
+YELLOW="\e[33m"
+BLUE="\e[36m"
+RESET="\e[0m"
+
+clear
+echo -e "${BLUE}===========================================================${RESET}"
+echo -e "${GREEN}      🚀 Instalador Automático - ReycodeSSH v4${RESET}"
+echo -e "${BLUE}===========================================================${RESET}"
+echo ""
+
+sleep 1
+
+# Verificar root
+if [[ $EUID -ne 0 ]]; then
+  echo -e "${RED}[✖] Debes ejecutar este script como root.${RESET}"
+  exit 1
+fi
+
+# Paso 1: Actualización del sistema
+echo -e "${YELLOW}[…] Actualizando el sistema...${RESET}"
+apt-get update -y &>/dev/null
+echo -e "${GREEN}[✔] Sistema actualizado.${RESET}"
+
+# Paso 2: Instalación de dependencias
+echo -e "${YELLOW}[…] Instalando dependencias necesarias...${RESET}"
+apt-get install -y unzip wget apache2 &>/dev/null
+echo -e "${GREEN}[✔] Dependencias instaladas.${RESET}"
+
+# Paso 3: Descarga del sitio web
+echo -e "${YELLOW}[…] Descargando el paquete del sitio web...${RESET}"
+wget -O "$TEMP_FILE" "$ZIP_URL" &>/dev/null
+if [[ $? -ne 0 ]]; then
+  echo -e "${RED}[✖] Error al descargar el archivo ZIP.${RESET}"
+  exit 1
+fi
+echo -e "${GREEN}[✔] Descarga completada.${RESET}"
+
+# Paso 4: Extracción del sitio
+echo -e "${YELLOW}[…] Descomprimiendo el sitio...${RESET}"
+unzip -o "$TEMP_FILE" -d "$INSTALL_DIR" &>/dev/null
+if [[ $? -ne 0 ]]; then
+  echo -e "${RED}[✖] Error al descomprimir el archivo.${RESET}"
+  exit 1
+fi
+echo -e "${GREEN}[✔] Archivos extraídos en $INSTALL_DIR.${RESET}"
+
+# Paso 5: Permisos
+echo -e "${YELLOW}[…] Configurando permisos...${RESET}"
+chown -R www-data:www-data "$INSTALL_DIR"
+chmod -R 755 "$INSTALL_DIR"
+echo -e "${GREEN}[✔] Permisos configurados.${RESET}"
+
+# Paso 6: Limpieza
+echo -e "${YELLOW}[…] Limpiando archivos temporales...${RESET}"
+rm -f "$TEMP_FILE"
+echo -e "${GREEN}[✔] Limpieza completada.${RESET}"
+
+# Paso 7: Reiniciar Apache
+echo -e "${YELLOW}[…] Reiniciando servicio Apache...${RESET}"
+systemctl restart apache2
+echo -e "${GREEN}[✔] Apache reiniciado correctamente.${RESET}"
+
+echo ""
+echo -e "${BLUE}===========================================================${RESET}"
+echo -e "${GREEN} ✅ Instalación completada exitosamente.${RESET}"
+echo -e "${YELLOW} 🌐 Accede al sitio en:${RESET} http://localhost/ReycodeSSH_v4"
+echo -e "${BLUE}===========================================================${RESET}"
+echo ""
+
+exit 0
