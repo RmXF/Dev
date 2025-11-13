@@ -1,0 +1,321 @@
+#!/usr/bin/env bash
+# build_reycodessh_v5_zip.sh
+# Crea ReycodeSSH_v5.0.zip con la estructura del sitio (loader inteligente, sidebar, theme toggle, particles lente)
+set -euo pipefail
+
+OUT_ZIP="ReycodeSSH_v5.0.zip"
+TMPDIR="$(mktemp -d)"
+ROOT="${TMPDIR}/reycodessh_v5"
+
+echo "Creando estructura en ${ROOT} ..."
+
+mkdir -p "${ROOT}/assets/css"
+mkdir -p "${ROOT}/assets/js"
+mkdir -p "${ROOT}/assets/lottie"
+mkdir -p "${ROOT}/assets/img"
+
+# index.html
+cat > "${ROOT}/index.html" <<'HTML'
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>ReycodeSSH v5.0</title>
+  <meta name="description" content="Conectividad inteligente para todos tus servidores SSH - ReycodeSSH">
+  <link rel="icon" href="assets/img/logo.png">
+  <link rel="stylesheet" href="assets/css/style.css">
+</head>
+<body>
+  <!-- Loader -->
+  <div id="loader" class="loader" aria-hidden="false">
+    <div class="loader-inner">
+      <div class="logo-wrap">
+        <img src="assets/img/logo.svg" alt="RS logo" class="logo-img">
+      </div>
+      <div class="loader-text">Iniciando ReycodeSSH…</div>
+      <div class="progress"><div id="progress-bar"></div></div>
+      <div class="progress-percent" id="progress-percent">0%</div>
+    </div>
+  </div>
+
+  <!-- Sidebar -->
+  <aside id="sidebar" class="sidebar" aria-hidden="true">
+    <div class="sidebar-header">
+      <img src="assets/img/logo.svg" class="sidebar-logo" alt="RS">
+      <h3>ReycodeSSH</h3>
+    </div>
+    <nav class="sidebar-nav">
+      <a href="#" class="active">Inicio</a>
+      <a href="#services">Servicios</a>
+      <a href="#servers">Servidores SSH</a>
+      <a href="#contact">Contacto</a>
+    </nav>
+    <div class="sidebar-footer">
+      <button id="theme-toggle-sidebar" class="theme-btn">Modo</button>
+    </div>
+  </aside>
+
+  <!-- Top navbar with hamburger -->
+  <header class="topbar">
+    <button id="btn-hamburger" class="hamburger" aria-label="Abrir menú">☰</button>
+    <div class="topbar-brand">ReycodeSSH</div>
+  </header>
+
+  <!-- Floating theme button -->
+  <button id="theme-toggle" class="floating-theme" aria-label="Cambiar tema">🌗</button>
+
+  <!-- Main content -->
+  <main id="main" class="main" aria-hidden="true">
+    <section class="hero">
+      <div class="hero-inner">
+        <div class="hero-text">
+          <h1 id="hero-title">Conectividad inteligente para todos tus servidores SSH</h1>
+          <p class="lead">Neumorphism · Lottie · Partículas · Modo claro/oscuro</p>
+          <div class="actions">
+            <a href="mailto:venenorks@gmail.com" class="btn primary">Contáctame</a>
+            <a href="#services" class="btn ghost">Ver demo</a>
+          </div>
+        </div>
+        <div class="hero-visual">
+          <div id="lottie-container"></div>
+        </div>
+      </div>
+    </section>
+
+    <section id="services" class="section services">
+      <h2>Servicios</h2>
+      <div class="cards">
+        <article class="card">Optimización</article>
+        <article class="card">Seguridad</article>
+        <article class="card">Soporte</article>
+      </div>
+    </section>
+
+    <section id="servers" class="section servers">
+      <h2>Servidores SSH</h2>
+      <p>Contenido de ejemplo para la sección de servidores.</p>
+    </section>
+
+    <footer id="contact" class="footer">
+      <div>Contacto: <a href="mailto:venenorks@gmail.com">venenorks@gmail.com</a></div>
+      <div>&copy; ReycodeSSH 2025</div>
+    </footer>
+  </main>
+
+  <!-- Particles background -->
+  <div id="particles" class="particles" aria-hidden="true"></div>
+
+  <script src="assets/js/lottie.min.js" defer></script>
+  <script src="assets/js/particles.min.js" defer></script>
+  <script src="assets/js/main.js" defer></script>
+</body>
+</html>
+HTML
+
+# CSS
+cat > "${ROOT}/assets/css/style.css" <<'CSS'
+:root{
+  --bg:#0a1b2a;
+  --card:#0f2330;
+  --muted:#9fb6c9;
+  --accent:#1fb6ff;
+  --glass: rgba(255,255,255,0.03);
+  --shadow-dark: rgba(2,6,23,0.7);
+  --shadow-light: rgba(255,255,255,0.03);
+}
+[data-theme="light"]{
+  --bg:#f2f5f8;
+  --card:#e9eef2;
+  --muted:#55707f;
+  --accent:#1f7fff;
+  --glass: rgba(0,0,0,0.04);
+  --shadow-dark: rgba(0,0,0,0.12);
+  --shadow-light: rgba(255,255,255,0.9);
+}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0;font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,Arial;background:var(--bg);color:var(--muted);overflow-x:hidden}
+.loader{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:var(--bg);z-index:9999;transition:opacity .5s ease, visibility .5s;}
+.loader-inner{width:320px;text-align:center;background:linear-gradient(180deg, rgba(255,255,255,0.02), transparent);padding:28px;border-radius:14px;box-shadow: 12px 12px 24px var(--shadow-dark), -8px -8px 18px var(--shadow-light);}
+.logo-img{width:76px;height:76px}
+.loader-text{margin-top:10px;color:var(--muted);font-weight:600}
+.progress{width:100%;height:8px;background:rgba(255,255,255,0.04);border-radius:8px;margin-top:14px;overflow:hidden}
+#progress-bar{height:100%;width:0;background:linear-gradient(90deg,var(--accent),#06b6d4);transition:width .2s ease}
+.progress-percent{margin-top:8px;color:var(--muted);font-size:13px}
+.topbar{position:fixed;left:0;right:0;top:0;height:56px;display:flex;align-items:center;padding:0 16px;z-index:60;background:transparent}
+.hamburger{background:transparent;border:0;color:var(--muted);font-size:20px;cursor:pointer;margin-right:16px}
+.topbar-brand{font-weight:700;color:var(--accent)}
+.sidebar{position:fixed;left:0;top:56px;bottom:0;width:240px;padding:18px;background:var(--card);border-radius:0 12px 12px 0;box-shadow:12px 12px 30px var(--shadow-dark), -8px -8px 20px var(--shadow-light);transform:translateX(-260px);transition:transform .35s ease;z-index:80}
+.sidebar.open{transform:translateX(0);}
+.sidebar-header{display:flex;align-items:center;gap:12px;margin-bottom:18px}
+.sidebar-logo{width:44px;height:44px}
+.sidebar-nav a{display:block;padding:10px 8px;border-radius:8px;color:var(--muted);text-decoration:none;margin-bottom:6px}
+.sidebar-nav a.active, .sidebar-nav a:hover{background:linear-gradient(90deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));color:var(--accent)}
+.floating-theme{position:fixed;right:18px;bottom:22px;width:56px;height:56px;border-radius:16px;border:0;background:var(--card);box-shadow:8px 8px 18px var(--shadow-dark), -6px -6px 14px var(--shadow-light);cursor:pointer;z-index:90;font-size:20px}
+.main{padding:80px 24px 40px 24px;max-width:1100px;margin:0 auto}
+.hero{min-height:60vh;display:flex;align-items:center;justify-content:center;position:relative;z-index:10}
+.hero-inner{display:grid;grid-template-columns:1fr 360px;gap:28px;align-items:center}
+.hero-text h1{font-size:28px;margin:0;color:var(--accent)}
+.lead{color:var(--muted);margin:8px 0 18px}
+.btn{padding:10px 16px;border-radius:12px;text-decoration:none;font-weight:700;border:0;cursor:pointer}
+.btn.primary{background:linear-gradient(90deg,var(--accent),#06b6d4);color:#012;}
+.btn.ghost{background:transparent;border:1px solid rgba(255,255,255,0.04);color:var(--muted)}
+#lottie-container{width:320px;height:320px;border-radius:14px;box-shadow:8px 12px 30px rgba(2,6,23,0.5);background:linear-gradient(180deg, rgba(255,255,255,0.02), transparent)}
+.section{padding:40px 0}
+.cards{display:flex;gap:12px}
+.card{flex:1;padding:18px;border-radius:12px;background:var(--card);box-shadow:8px 8px 18px var(--shadow-dark), -6px -6px 14px var(--shadow-light);color:var(--muted)}
+.particles{position:fixed;inset:0;z-index:1;pointer-events:none}
+@media (max-width:900px){
+  .hero-inner{grid-template-columns:1fr; padding:60px 0}
+  .sidebar{display:none}
+  .sidebar.open{transform:translateX(-260px)}
+  .floating-theme{right:12px;bottom:16px}
+  .main{padding-top:72px}
+}
+CSS
+
+# main.js
+cat > "${ROOT}/assets/js/main.js" <<'JS'
+document.addEventListener('DOMContentLoaded', function(){
+  var loader = document.getElementById('loader');
+  var progressBar = document.getElementById('progress-bar');
+  var progressPct = document.getElementById('progress-percent');
+  var main = document.getElementById('main');
+  var sidebar = document.getElementById('sidebar');
+  var btnHamburger = document.getElementById('btn-hamburger');
+  var themeBtn = document.getElementById('theme-toggle');
+  var themeSidebarBtn = document.getElementById('theme-toggle-sidebar');
+
+  btnHamburger && btnHamburger.addEventListener('click', function(){
+    if(sidebar) sidebar.classList.toggle('open');
+  });
+
+  var prefer = localStorage.getItem('rey_theme');
+  if(prefer) document.documentElement.setAttribute('data-theme', prefer);
+  else {
+    var mq = window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches;
+    document.documentElement.setAttribute('data-theme', mq ? 'light' : 'dark');
+  }
+  function updateThemeButton(){
+    var t = document.documentElement.getAttribute('data-theme');
+    if(t === 'light'){ themeBtn.textContent = '🌞'; }
+    else { themeBtn.textContent = '🌙'; }
+  }
+  updateThemeButton();
+  themeBtn && themeBtn.addEventListener('click', function(){
+    var cur = document.documentElement.getAttribute('data-theme');
+    var next = (cur === 'light') ? 'dark' : 'light';
+    document.documentElement.setAttribute('data-theme', next);
+    localStorage.setItem('rey_theme', next);
+    updateThemeButton();
+    document.documentElement.classList.add('theme-transition');
+    setTimeout(function(){ document.documentElement.classList.remove('theme-transition'); }, 600);
+  });
+  themeSidebarBtn && themeSidebarBtn.addEventListener('click', function(){ themeBtn && themeBtn.click(); });
+
+  var resourcesToWait = [];
+  document.querySelectorAll('img').forEach(function(img){
+    if(!img.complete){
+      resourcesToWait.push(new Promise(function(resolve){ img.addEventListener('load', resolve); img.addEventListener('error', resolve); }));
+    }
+  });
+  var lottieReady = new Promise(function(resolve){
+    var tries = 0;
+    function check(){ tries++; if(window.lottie){ resolve(); } else if(tries>12){ resolve(); } else setTimeout(check, 200); }
+    check();
+  });
+  resourcesToWait.push(lottieReady);
+  var progress = 0;
+  function tick(){ progress = Math.min(98, progress + Math.floor(Math.random()*8)+3); if(progressBar) progressBar.style.width = progress + '%'; if(progressPct) progressPct.textContent = progress + '%'; if(progress < 98) setTimeout(tick, 200 + Math.random()*200); }
+  tick();
+  Promise.all(resourcesToWait).then(function(){
+    if(progressBar) progressBar.style.width = '100%'; if(progressPct) progressPct.textContent = '100%';
+    setTimeout(function(){ if(loader){ loader.style.opacity = 0; setTimeout(function(){ loader.style.display = 'none'; loader.setAttribute('aria-hidden','true'); }, 500); } if(main){ main.removeAttribute('aria-hidden'); } }, 350);
+  });
+  if(window.initParticles) window.initParticles({count:60});
+  function startLottie(){ if(window.lottie){ try { lottie.loadAnimation({ container: document.getElementById('lottie-container'), renderer: 'svg', loop: true, autoplay: true, path: 'assets/lottie/animation.json' }); } catch(e){ console.warn('lottie error', e); } } else { setTimeout(startLottie, 300); } }
+  startLottie();
+  var obs = new IntersectionObserver(function(entries){ entries.forEach(function(e){ if(e.isIntersecting) e.target.classList.add('aos-animated'); }); }, {threshold:0.12});
+  document.querySelectorAll('[data-aos]').forEach(function(el){ obs.observe(el); });
+});
+JS
+
+# particles.min.js
+cat > "${ROOT}/assets/js/particles.min.js" <<'JS'
+window.initParticles = function(opts){
+  var count = (opts && opts.count) ? opts.count : 50;
+  var container = document.getElementById('particles');
+  if(!container) return;
+  for(var i=0;i<count;i++){
+    var el = document.createElement('div');
+    el.className = 'p-dot';
+    var s = 1 + Math.random()*3;
+    el.style.width = s+'px'; el.style.height = s+'px';
+    el.style.position = 'absolute'; el.style.borderRadius = '50%';
+    el.style.background = 'rgba(31,182,255,'+(0.04+Math.random()*0.12)+')';
+    el.style.left = (Math.random()*100)+'%'; el.style.top = (Math.random()*100)+'%';
+    el.style.transform = 'translate(-50%,-50%)';
+    container.appendChild(el);
+  }
+  var style = document.createElement('style');
+  style.innerHTML = '.p-dot{animation:pf 18s ease-in-out infinite}@keyframes pf{0%{transform:translateY(0)}50%{transform:translateY(-20px)}100%{transform:translateY(0)}}';
+  document.head.appendChild(style);
+  document.addEventListener('mousemove', function(e){
+    var cx=window.innerWidth/2, cy=window.innerHeight/2;
+    var dx=(e.clientX-cx)/cx, dy=(e.clientY-cy)/cy;
+    document.querySelectorAll('.p-dot').forEach(function(p,i){
+      var mv = (i%6+1)*1.1;
+      p.style.transform = 'translate('+(-50 + dx*mv)+'%,'+(-50 + dy*mv)+'%)';
+    });
+  });
+};
+JS
+
+# lottie loader
+cat > "${ROOT}/assets/js/lottie.min.js" <<'JS'
+(function(){ function load(url,cb){var s=document.createElement('script');s.src=url;s.onload=cb;document.head.appendChild(s);} if(typeof lottie==='undefined'){ try{ load('https://cdnjs.cloudflare.com/ajax/libs/bodymovin/5.7.11/lottie.min.js'); }catch(e){} } })();
+JS
+
+# lottie animation json (simple)
+cat > "${ROOT}/assets/lottie/animation.json" <<'JSON'
+{"v":"5.7.4","fr":30,"ip":0,"op":60,"w":400,"h":400,"nm":"v5-circle","ddd":0,"assets":[],"layers":[{"ddd":0,"ind":1,"ty":4,"nm":"circle","ks":{"o":{"k":100},"r":{"k":0},"p":{"k":[200,200,0]},"a":{"k":[0,0,0]},"s":{"k":[100,100,100]}},"shapes":[{"ty":"el","p":{"k":[0,0]},"s":{"k":[240,240]}},{"ty":"fl","c":{"k":[0.078,0.713,1,1]}}],"ip":0,"op":60,"st":0,"bm":0}]}
+JSON
+
+# images (svg + png)
+cat > "${ROOT}/assets/img/logo.svg" <<'SVG'
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256"><defs><linearGradient id="g" x1="0" x2="1"><stop offset="0" stop-color="#1fb6ff"/><stop offset="1" stop-color="#06b6d4"/></linearGradient><filter id="s" x="-50%" y="-50%" width="200%" height="200%"><feDropShadow dx="8" dy="10" stdDeviation="16" flood-color="#00151f" flood-opacity="0.6"/></filter></defs><rect x="0" y="0" width="256" height="256" rx="40" fill="#0f2330"/><g filter="url(#s)"><rect x="28" y="28" width="200" height="200" rx="36" fill="#0f2330"/></g><text x="50%" y="55%" font-family="Poppins, sans-serif" font-weight="700" font-size="96" fill="url(#g)" text-anchor="middle" alignment-baseline="central">RS</text></svg>
+SVG
+
+# small PNG (1x1 transparent placeholder)
+cat > "${ROOT}/assets/img/logo.png" <<'BASE64'
+iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIW2P8z/C/HwAGgwJ/l6d9TwAAAABJRU5ErkJggg==
+BASE64
+base64 --decode "${ROOT}/assets/img/logo.png" > "${ROOT}/assets/img/logo.png.decoded" || true
+mv "${ROOT}/assets/img/logo.png.decoded" "${ROOT}/assets/img/logo.png" || true
+
+# manifest, robots, sitemap
+cat > "${ROOT}/manifest.json" <<'JSON'
+{"name":"ReycodeSSH","short_name":"ReycodeSSH","start_url":"/","display":"standalone","background_color":"#0a1b2a","theme_color":"#1fb6ff","icons":[{"src":"assets/img/logo.png","sizes":"192x192","type":"image/png"}]}
+JSON
+cat > "${ROOT}/robots.txt" <<'TXT'
+User-agent: *
+Disallow:
+Sitemap: /sitemap.xml
+TXT
+cat > "${ROOT}/sitemap.xml" <<'XML'
+<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url><loc>/</loc></url>
+</urlset>
+XML
+
+# create zip
+echo "Empaquetando ${OUT_ZIP} ..."
+( cd "${TMPDIR}" && zip -r "${OUT_ZIP}" "reycodessh_v5" > /dev/null )
+
+# move zip to current directory
+mv "${TMPDIR}/${OUT_ZIP}" ./ || true
+
+echo "ZIP creado: ./$(basename ${OUT_ZIP})"
+echo "Contenido temporal en: ${ROOT}"
+echo "Puedes ahora subir ./$(basename ${OUT_ZIP}) a GitHub o tu servidor."
