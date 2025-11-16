@@ -1,463 +1,599 @@
 #!/usr/bin/env bash
-# rs - Instalador/gestor de sitio web simple con menú y estatus en tiempo real
-# Coloca este archivo en /usr/local/bin/rs y hazlo ejecutable (chmod +x).
-# Uso: sudo rs
-
+# rs-installer.sh - Instalador PRO (Menu rs)
+# Versión: 2025-11-15 PRO
+# Guarda en /usr/local/bin/rs-installer.sh y chmod +x
 set -euo pipefail
 IFS=$'\n\t'
 
-#######################
-# Configurables
-#######################
-WWW_BASE="/var/www"              # base para sitios (creará /var/www/<sitename>)
-NGINX_SITES_ENABLED="/etc/nginx/sites-enabled"
-NGINX_SITES_AVAILABLE="/etc/nginx/sites-available"
-LOG_DIR="/var/log/rs_install"
+########## CONFIG ##########
+WWW_BASE="/var/www"
+LOG_DIR="/var/log/rs_installer"
 BACKUP_DIR="/var/backups/rs"
-TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
-spinner_pid=""
+TIMESTAMP="$(date +'%Y%m%d_%H%M%S')"
+LOGFILE="$LOG_DIR/rs_${TIMESTAMP}.log"
+NGINX_AVAILABLE="/etc/nginx/sites-available"
+NGINX_ENABLED="/etc/nginx/sites-enabled"
+CMD_TARGET="/usr/local/bin/rs"
+MAX_SIMULATED_TIME=2   # segundos para mostrar pequeñas barras de progreso (solo UX)
+########## END CONFIG ##########
 
-#######################
-# Utilidades
-#######################
-mkdir -p "$LOG_DIR" "$BACKUP_DIR" "$WWW_BASE"
+mkdir -p "$WWW_BASE" "$LOG_DIR" "$BACKUP_DIR"
+touch "$LOGFILE"
 
-logfile="$LOG_DIR/rs_${TIMESTAMP}.log"
+# Colors
+RED=$'\e[31m'; GREEN=$'\e[32m'; YEL=$'\e[33m'; BLUE=$'\e[34m'; BOLD=$'\e[1m'; RESET=$'\e[0m'
 
-log() {
-  echo "[$(date +'%F %T')] $*" | tee -a "$logfile"
-}
+log() { printf "%s %s\n" "[$(date +'%F %T')]" "$*" | tee -a "$LOGFILE"; }
+err() { printf "%b\n" "${RED}[ERROR]${RESET} $*" | tee -a "$LOGFILE" >&2; }
 
-# spinner while a background command runs
-start_spinner() {
-  local msg="$1"
-  local delay=0.08
-  printf "%s" "$msg"
-  ( while true; do for s in '/' '-' '\' '|'; do printf "\b%s" "$s"; sleep $delay; done; done ) &
-  spinner_pid=$!
+### trap to log exits
+trap 'rc=$?; if [ $rc -ne 0 ]; then err "Script terminado con codigo $rc. Revisa $LOGFILE"; else log "Script finalizado correctamente."; fi' EXIT
+
+# --------------------------
+# Helpers: spinner & progress
+# --------------------------
+_spinner_pid=""
+start_spinner(){
+  local msg="${1:-Procesando}"
+  printf "%s " "$msg"
+  ( while true; do for c in / - \\ \|; do printf "%s\b" "$c"; sleep 0.08; done; done ) &
+  _spinner_pid=$!
   disown
 }
-
-stop_spinner() {
-  if [[ -n "$spinner_pid" ]]; then
-    kill "$spinner_pid" >/dev/null 2>&1 || true
-    wait "$spinner_pid" 2>/dev/null || true
-    spinner_pid=""
-    printf "\b"  # clear spinner char
+stop_spinner(){
+  if [ -n "$_spinner_pid" ]; then
+    kill "$_spinner_pid" >/dev/null 2>&1 || true
+    wait "$_spinner_pid" 2>/dev/null || true
+    _spinner_pid=""
+    printf "\b"
   fi
-  echo "" # newline
+  echo ""
 }
 
-run_and_log() {
-  # Runs a command showing live output and also logging it
-  # usage: run_and_log command...
-  log "EXEC: $*"
-  "$@" 2>&1 | tee -a "$logfile"
-  local rc=${PIPESTATUS[0]}
-  return $rc
+progress_bar_sim(){
+  # small simulated progress bar for quick UX
+  local duration="${1:-1}"
+  local steps=20
+  local sleepv
+  sleepv=$(awk "BEGIN {print $duration/$steps}")
+  printf "["
+  for i in $(seq 1 $steps); do
+    printf "#"
+    sleep "$sleepv"
+  done
+  printf "]\n"
 }
 
-run_bg_log() {
-  # Run command in background, show spinner and append stdout/stderr to log
-  # usage: run_bg_log "description" command args...
-  local desc="$1"; shift
-  log "$desc..."
-  "$@" >>"$logfile" 2>&1 &
+run_and_log(){
+  log ">>> Ejecutando: $*"
+  "$@" 2>&1 | tee -a "$LOGFILE"
+  return ${PIPESTATUS[0]:-0}
+}
+
+run_bg_log(){
+  log ">>> Ejecutando (bg): $*"
+  bash -c "$*" >>"$LOGFILE" 2>&1 &
   local pid=$!
-  start_spinner "$desc... "
+  start_spinner "Ejecutando en background (pid $pid)..."
   wait "$pid"
-  local rc=$?
   stop_spinner
-  if [[ $rc -ne 0 ]]; then
-    log "ERROR ($rc) al ejecutar: $desc"
-    return $rc
-  fi
-  log "OK: $desc"
-  return 0
+  return $?
 }
 
-detect_pkg_manager() {
-  if command -v apt-get >/dev/null 2>&1; then
-    echo "apt"
-  elif command -v yum >/dev/null 2>&1; then
-    echo "yum"
-  elif command -v dnf >/dev/null 2>&1; then
-    echo "dnf"
-  else
-    echo "unknown"
-  fi
+# --------------------------
+# Detect package manager & platform
+# --------------------------
+detect_platform(){
+  local pm="unknown"
+  if command -v apt-get >/dev/null 2>&1; then pm="apt"; fi
+  if command -v dnf >/dev/null 2>&1; then pm="dnf"; fi
+  if command -v yum >/dev/null 2>&1 && [ "$pm" = "unknown" ]; then pm="yum"; fi
+  if command -v apk >/dev/null 2>&1; then pm="apk"; fi
+  echo "$pm"
 }
+PKG_MANAGER="$(detect_platform)"
+log "Package manager detectado: $PKG_MANAGER"
 
-install_packages() {
+install_pkgs(){
   local pkgs=("$@")
-  local pm
-  pm=$(detect_pkg_manager)
-  if [[ "$pm" == "apt" ]]; then
-    run_bg_log "Actualizando repositorios (apt-get update)" sudo apt-get update -y
-    run_bg_log "Instalando paquetes: ${pkgs[*]}" sudo apt-get install -y "${pkgs[@]}"
-  elif [[ "$pm" == "yum" || "$pm" == "dnf" ]]; then
-    run_bg_log "Instalando paquetes: ${pkgs[*]}" sudo "$pm" install -y "${pkgs[@]}"
+  case "$PKG_MANAGER" in
+    apt)
+      run_bg_log "apt-get update -y" sudo apt-get update -y
+      run_bg_log "apt-get install -y ${pkgs[*]}" sudo apt-get install -y "${pkgs[@]}"
+      ;;
+    dnf|yum)
+      run_bg_log "$PKG_MANAGER install -y ${pkgs[*]}" sudo "$PKG_MANAGER" install -y "${pkgs[@]}"
+      ;;
+    apk)
+      run_bg_log "apk add ${pkgs[*]}" sudo apk add --no-cache "${pkgs[@]}"
+      ;;
+    *)
+      err "No se detectó un gestor de paquetes soportado. Instala los paquetes manualmente: ${pkgs[*]}"
+      return 1
+      ;;
+  esac
+}
+
+# --------------------------
+# Ensure required tools exist
+# --------------------------
+ensure_tools(){
+  local wants=(nginx curl wget tar unzip git)
+  local miss=()
+  for t in "${wants[@]}"; do
+    if ! command -v "$t" >/dev/null 2>&1; then miss+=("$t"); fi
+  done
+  if [ ${#miss[@]} -gt 0 ]; then
+    log "Instalando herramientas faltantes: ${miss[*]}"
+    install_pkgs "${miss[@]}" || err "Fallo instalando herramientas: ${miss[*]}"
   else
-    log "No se detectó gestor de paquetes soportado (apt/yum/dnf). Instala manualmente: ${pkgs[*]}"
-    return 1
+    log "Herramientas básicas presentes."
   fi
 }
 
-ensure_nginx() {
+# --------------------------
+# Nginx ensure
+# --------------------------
+ensure_nginx(){
   if ! command -v nginx >/dev/null 2>&1; then
-    log "Nginx no está instalado. Intentando instalar..."
-    install_packages nginx
-    run_and_log sudo systemctl enable --now nginx
+    log "NGINX no encontrado. Instalando nginx..."
+    install_pkgs nginx
   else
-    log "Nginx ya instalado."
+    log "NGINX ya instalado."
+  fi
+  # Enable & start
+  if command -v systemctl >/dev/null 2>&1; then
+    run_and_log sudo systemctl enable --now nginx || log "Advertencia: no se pudo habilitar systemd para nginx (puede ser que ya esté habilitado)."
   fi
 }
 
-#######################
-# Site generation
-#######################
-generate_site_files() {
-  local sitename="$1"
-  local header="$2"
-  local contact_email="$3"
-  local header_text="$4"
-  local image_url="$5"
+# --------------------------
+# Site scaffolding
+# --------------------------
+generate_site_static(){
+  local sitename="$1"; local header="$2"; local contact="$3"; local header_text="$4"; local img="$5"
   local site_dir="$WWW_BASE/$sitename"
-
   mkdir -p "$site_dir"
-  log "Creando contenido base en $site_dir"
-
-  # index.html with simple 3D effect + animation
   cat > "$site_dir/index.html" <<HTML
 <!doctype html>
 <html lang="es">
 <head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width,initial-scale=1" />
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
 <title>${header} - ${sitename}</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
 <style>
-  /* Minimal CSS que genera efectos 3D y animaciones */
-  :root{--bg:#0f1724;--card:#0b1220;--accent:#00b4ff}
-  html,body{height:100%;margin:0;font-family:Inter,system-ui,Segoe UI,Arial;}
-  body{background:linear-gradient(135deg,#071027 0%, #081220 50%, #0b1830 100%);display:flex;align-items:center;justify-content:center;color:#e6eef8}
-  .scene{perspective:1200px;padding:40px}
-  .card{width:min(980px,92vw);background:linear-gradient(180deg, rgba(255,255,255,0.02), rgba(0,0,0,0.03));border-radius:20px;padding:36px;box-shadow:0 10px 40px rgba(2,6,23,0.8);transform-style:preserve-3d;transition:transform .6s cubic-bezier(.2,.9,.3,1)}
-  .card:hover{transform:rotateX(6deg) rotateY(-6deg) translateZ(10px)}
-  h1{font-size:clamp(22px,4vw,44px);margin:0 0 10px}
-  p.lead{margin:0 0 18px;font-size:1.05rem;opacity:.9}
-  .hero{display:flex;gap:24px;align-items:center}
-  .hero .img{flex:0 0 320px;border-radius:14px;overflow:hidden;box-shadow:0 8px 30px rgba(0,0,0,0.6);transform:translateZ(40px)}
-  .hero .img img{display:block;width:100%;height:100%;object-fit:cover}
-  .meta{flex:1}
-  .btn{display:inline-block;padding:10px 18px;border-radius:10px;background:linear-gradient(90deg,var(--accent),#6ef);color:#001;text-decoration:none;font-weight:700;box-shadow:0 8px 30px rgba(0,180,255,0.12)}
-  footer{margin-top:18px;font-size:.9rem;opacity:.85}
-  /* decorative glowing lines */
-  .glow{position:absolute;inset:0;pointer-events:none;background:
-    radial-gradient(600px 200px at 10% 10%, rgba(0,180,255,0.06), transparent 10%),
-    radial-gradient(400px 150px at 90% 90%, rgba(0,200,255,0.03), transparent 10%);}
-  @keyframes floaty{0%{transform:translateY(0)}50%{transform:translateY(-8px)}100%{transform:translateY(0)}}
-  .floating{animation:floaty 5s ease-in-out infinite}
+:root{--bg:#071127;--card:#0c1630;--accent:#00d4ff}
+*{box-sizing:border-box}
+body{margin:0;min-height:100vh;background:linear-gradient(135deg,var(--bg),#0b1b2b);color:#e6f6ff;font-family:Inter,system-ui,Arial;display:flex;align-items:center;justify-content:center;padding:30px}
+.scene{perspective:1400px;width:100%}
+.card{background:linear-gradient(180deg, rgba(255,255,255,0.02), rgba(0,0,0,0.04));border-radius:18px;padding:28px;max-width:1100px;margin:0 auto;box-shadow:0 20px 60px rgba(2,6,23,0.75);transform-style:preserve-3d;transition:transform .5s}
+.card:hover{transform:rotateX(3deg) rotateY(-6deg)}
+.header{display:flex;gap:24px;align-items:center}
+.img{flex:0 0 360px;border-radius:12px;overflow:hidden;transform:translateZ(40px)}
+.img img{width:100%;height:100%;object-fit:cover}
+.meta{flex:1}
+h1{margin:0;font-size:clamp(22px,4vw,44px)}
+.lead{opacity:.9;margin-top:8px}
+.btn{display:inline-block;padding:10px 16px;border-radius:10px;background:linear-gradient(90deg,var(--accent),#6ef);color:#001;font-weight:700;text-decoration:none;margin-top:14px}
+.footer{margin-top:14px;opacity:.8;font-size:.9rem}
+.glow{position:fixed;inset:0;pointer-events:none;background:
+  radial-gradient(600px 200px at 10% 10%, rgba(0,180,255,0.05), transparent 10%),
+  radial-gradient(400px 150px at 90% 90%, rgba(0,200,255,0.03), transparent 10%);}
+@keyframes floaty{0%{transform:translateY(0)}50%{transform:translateY(-8px)}100%{transform:translateY(0)}}
+.floating{animation:floaty 5s ease-in-out infinite}
 </style>
 </head>
 <body>
 <div class="scene">
   <div class="card">
-    <div style="position:relative">
-      <div class="glow"></div>
-      <div class="hero">
-        <div class="img floating">
-          <img src="${image_url}" alt="Imagen principal" onerror="this.src='https://picsum.photos/640/420?random=1'">
-        </div>
-        <div class="meta">
-          <h1>${header}</h1>
-          <p class="lead">${header_text}</p>
-          <a class="btn" href="mailto:${contact_email}">Contactar: ${contact_email}</a>
-          <div style="margin-top:12px;color:#9fb7d6">Sitio: ${sitename} • Efectos 3D y animaciones</div>
-        </div>
+    <div class="header">
+      <div class="img floating">
+        <img src="${img}" alt="imagen" onerror="this.src='https://picsum.photos/640/420?random=1'">
       </div>
-      <footer>© ${sitename} • Generado: $(date +'%Y')</footer>
+      <div class="meta">
+        <h1>${header}</h1>
+        <p class="lead">${header_text}</p>
+        <a class="btn" href="mailto:${contact}">Contactar • ${contact}</a>
+        <div class="footer">Sitio: ${sitename} • Generado: $(date +%Y)</div>
+      </div>
     </div>
   </div>
 </div>
+<div class="glow"></div>
 </body>
 </html>
 HTML
 
-  # metadata file to preserve user input for patches
+  # meta file for patches
   cat > "$site_dir/.rs_meta" <<META
 SITE_NAME=${sitename}
 HEADER=${header}
-CONTACT=${contact_email}
+CONTACT=${contact}
 HEADER_TEXT=${header_text}
-IMAGE_URL=${image_url}
+IMAGE_URL=${img}
 INSTALLED_AT=$(date +'%F %T')
 META
 
-  chown -R www-data:www-data "$site_dir" 2>/dev/null || true
-  log "Archivos del sitio creados en $site_dir"
+  sudo chown -R www-data:www-data "$site_dir" 2>/dev/null || true
+  log "Sitio $sitename creado en $site_dir"
 }
 
-configure_nginx_site() {
+generate_site_php(){
+  local sitename="$1"; local header="$2"; local contact="$3"; local header_text="$4"; local img="$5"
+  local site_dir="$WWW_BASE/$sitename"
+  mkdir -p "$site_dir"
+  cat > "$site_dir/index.php" <<'PHP'
+<?php
+$header = htmlspecialchars($_ENV['RS_HEADER'] ?? 'Mi sitio PHP');
+$header_text = htmlspecialchars($_ENV['RS_HEADER_TEXT'] ?? 'Descripcion breve');
+$contact = htmlspecialchars($_ENV['RS_CONTACT'] ?? 'contacto@example.com');
+$img = htmlspecialchars($_ENV['RS_IMAGE'] ?? 'https://picsum.photos/640/420?random=1');
+?><!doctype html>
+<html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title><?= $header ?></title></head>
+<body style="font-family:Inter,Arial;background:#071127;color:#e6f6ff;padding:30px">
+  <h1><?= $header ?></h1>
+  <p><?= $header_text ?></p>
+  <img src="<?= $img ?>" style="max-width:400px;border-radius:12px">
+  <p>Contact: <a href="mailto:<?= $contact ?>"><?= $contact ?></a></p>
+</body></html>
+PHP
+
+  # .env apache/nginx passthrough via fastcgi_params isn't automatic; we'll write meta to .rs_meta
+  cat > "$site_dir/.rs_meta" <<META
+SITE_NAME=${sitename}
+HEADER=${header}
+CONTACT=${contact}
+HEADER_TEXT=${header_text}
+IMAGE_URL=${img}
+INSTALLED_AT=$(date +'%F %T')
+META
+
+  sudo chown -R www-data:www-data "$site_dir" 2>/dev/null || true
+  log "Sitio PHP $sitename creado."
+}
+
+generate_site_node(){
+  local sitename="$1"; local header="$2"; local contact="$3"; local header_text="$4"; local img="$5"
+  local site_dir="$WWW_BASE/$sitename"
+  mkdir -p "$site_dir"
+  cat > "$site_dir/package.json" <<JSON
+{
+  "name": "${sitename//./-}",
+  "version": "1.0.0",
+  "main": "server.js",
+  "scripts": { "start": "node server.js" },
+  "dependencies": {}
+}
+JSON
+  cat > "$site_dir/server.js" <<NODE
+const http = require('http');
+const fs = require('fs');
+const path = require('path');
+const index = fs.readFileSync(path.join(__dirname,'index.html'),'utf8');
+const server = http.createServer((req,res)=>{
+  res.writeHead(200,{'Content-Type':'text/html; charset=utf-8'});
+  res.end(index);
+});
+const port = process.env.PORT || 3000;
+server.listen(port,()=>console.log('Node site running on',port));
+NODE
+
+  # basic index with 3D effect
+  cat > "$site_dir/index.html" <<HTML
+<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${header}</title></head>
+<body style="background:#071127;color:#e6f6ff;font-family:Inter,Arial;padding:30px">
+<h1>${header}</h1>
+<p>${header_text}</p>
+<img src="${img}" style="max-width:420px;border-radius:12px">
+<p>Contact: ${contact}</p>
+</body></html>
+HTML
+
+  cat > "$site_dir/.rs_meta" <<META
+SITE_NAME=${sitename}
+HEADER=${header}
+CONTACT=${contact}
+HEADER_TEXT=${header_text}
+IMAGE_URL=${img}
+INSTALLED_AT=$(date +'%F %T')
+META
+
+  sudo chown -R "$SUDO_USER":"$SUDO_USER" "$site_dir" 2>/dev/null || true
+  log "Sitio Node.js creado en $site_dir"
+}
+
+# --------------------------
+# Nginx Virtual Host config
+# --------------------------
+configure_nginx_for_site(){
   local sitename="$1"
   local site_dir="$WWW_BASE/$sitename"
-  local cfg_path="$NGINX_SITES_AVAILABLE/$sitename.conf"
-
-  if [[ ! -d "$site_dir" ]]; then
-    log "Error: directorio del sitio no existe: $site_dir"
-    return 1
-  fi
-
-  log "Configurando nginx para $sitename"
-
-  # Create nginx config for simple static site
-  sudo tee "$cfg_path" > /dev/null <<NGCONF
+  local conf="$NGINX_AVAILABLE/$sitename.conf"
+  cat > /tmp/ngx_${sitename}.conf <<NGX
 server {
     listen 80;
-    server_name $sitename;
-    root $site_dir;
-    index index.html;
-    access_log /var/log/nginx/${sitename}_access.log;
-    error_log /var/log/nginx/${sitename}_error.log;
+    server_name ${sitename} _;
+    root ${site_dir};
+    index index.html index.php;
     location / {
         try_files \$uri \$uri/ =404;
     }
+    location ~ \.php\$ {
+        include snippets/fastcgi-php.conf;
+        fastcgi_pass unix:/run/php/php-fpm.sock;
+    }
+    access_log /var/log/nginx/${sitename}_access.log;
+    error_log /var/log/nginx/${sitename}_error.log;
 }
-NGCONF
-
-  # enable site (Debian-style)
-  if [[ -d "$NGINX_SITES_AVAILABLE" ]]; then
-    sudo ln -sf "$cfg_path" "$NGINX_SITES_ENABLED/$sitename.conf"
-  fi
-
-  # Test and reload
+NGX
+  sudo mkdir -p "$NGINX_AVAILABLE" "$NGINX_ENABLED"
+  sudo mv /tmp/ngx_${sitename}.conf "$conf"
+  sudo ln -sf "$conf" "$NGINX_ENABLED/$sitename.conf"
   run_and_log sudo nginx -t
-  run_and_log sudo systemctl reload nginx
-  log "NGINX configurado para $sitename (archivo: $cfg_path)"
+  run_and_log sudo systemctl reload nginx || true
+  log "NGINX configurado para $sitename"
 }
 
-#######################
-# Menu actions
-#######################
-action_install_site() {
-  read -rp "Nombre del sitio (ej: ejemplo.com) > " sitename
-  if [[ -z "$sitename" ]]; then log "Nombre de sitio vacío. Cancelando."; return; fi
-
-  read -rp "Texto del encabezado visible (ej: Mi sitio increíble) > " header
-  read -rp "Correo de contacto (ej: contacto@ejemplo.com) > " contact
-  read -rp "Texto secundario para el encabezado > " header_text
-  read -rp "URL de la imagen principal (ENTER para usar placeholder) > " image_url
-  if [[ -z "$image_url" ]]; then
-    image_url="https://picsum.photos/640/420?random=1"
-  fi
-
-  log "Iniciando instalación del sitio: $sitename"
-  ensure_nginx
-
-  # create site files
-  run_bg_log "Creando archivos del sitio" bash -c "generate_site_files \"$sitename\" \"$header\" \"$contact\" \"$header_text\" \"$image_url\""
-
-  # configure nginx
-  configure_nginx_site "$sitename"
-
-  log "Instalación completada. Sitio disponible (si DNS/público): http://$sitename"
-  log "Si estás en una máquina local, puedes abrir http://localhost y configurar hosts si quieres."
-}
-
-action_uninstall_site() {
-  read -rp "Nombre del sitio a desinstalar (ej: ejemplo.com) > " sitename
-  if [[ -z "$sitename" ]]; then log "Nombre vacío. Cancelando."; return; fi
-
-  read -rp "¿Confirmas eliminar el sitio $sitename? escribe 'si' para confirmar: " confirm
-  if [[ "$confirm" != "si" ]]; then
-    log "No confirmado. Cancelando eliminación."
-    return
-  fi
-
-  local site_dir="$WWW_BASE/$sitename"
-  local cfg="$NGINX_SITES_AVAILABLE/$sitename.conf"
-  log "Creando backup antes de eliminar..."
-  local backup_file="$BACKUP_DIR/${sitename}_backup_${TIMESTAMP}.tar.gz"
-  tar -czf "$backup_file" -C "$WWW_BASE" "$sitename" 2>/dev/null || true
-  log "Backup guardado en $backup_file"
-
-  # remove files
-  if [[ -d "$site_dir" ]]; then
-    run_and_log sudo rm -rf "$site_dir"
-    log "Eliminado directorio $site_dir"
+# --------------------------
+# Backup site
+# --------------------------
+backup_site(){
+  local sitename="$1"
+  local dest="$BACKUP_DIR/${sitename}_backup_$(date +'%Y%m%d_%H%M%S').tar.gz"
+  if [ -d "$WWW_BASE/$sitename" ]; then
+    tar -C "$WWW_BASE" -czf "$dest" "$sitename"
+    log "Backup creado: $dest"
   else
-    log "No existe $site_dir"
+    err "No existe sitio $sitename para backup"
+    return 1
   fi
-
-  # remove nginx config
-  if [[ -f "$cfg" ]]; then
-    sudo rm -f "$NGINX_SITES_ENABLED/$sitename.conf" >/dev/null 2>&1 || true
-    sudo rm -f "$cfg"
-    run_and_log sudo nginx -t || true
-    run_and_log sudo systemctl reload nginx || true
-    log "Configuración nginx removida."
-  else
-    log "No se encontró configuración nginx para $sitename"
-  fi
-
-  log "Desinstalación finalizada."
 }
 
-action_protocols_active() {
-  log "Obteniendo puertos y protocolos activos..."
+# --------------------------
+# Patch installer (merge preserving .rs_meta)
+# --------------------------
+install_patch(){
+  local patchpath
+  read -rp "Ruta local o URL del parche (.tar.gz) (ENTER para cancelar): " patchpath
+  if [ -z "$patchpath" ]; then log "Cancelado."; return 0; fi
+
+  local tmp="/tmp/rs_patch_${TIMESTAMP}_$$"
+  mkdir -p "$tmp"
+  if [[ "$patchpath" =~ ^https?:// ]]; then
+    log "Descargando parche desde $patchpath..."
+    if command -v curl >/dev/null 2>&1; then
+      run_and_log sudo curl -L -o "$tmp/patch.tar.gz" "$patchpath"
+    elif command -v wget >/dev/null 2>&1; then
+      run_and_log sudo wget -O "$tmp/patch.tar.gz" "$patchpath"
+    else
+      err "No hay curl ni wget para descargar."
+      return 1
+    fi
+  else
+    if [ ! -f "$patchpath" ]; then err "Archivo no encontrado: $patchpath"; return 1; fi
+    cp "$patchpath" "$tmp/patch.tar.gz"
+  fi
+
+  tar -xzf "$tmp/patch.tar.gz" -C "$tmp"
+  log "Parche extraído en $tmp"
+
+  echo "Sitios detectados:"
+  ls -1 "$WWW_BASE" || true
+  read -rp "Nombre del sitio a actualizar > " sitename
+  if [ -z "$sitename" ] || [ ! -d "$WWW_BASE/$sitename" ]; then err "Sitio inválido"; return 1; fi
+
+  backup_site "$sitename"
+
+  # preserve meta
+  if [ -f "$WWW_BASE/$sitename/.rs_meta" ]; then
+    cp "$WWW_BASE/$sitename/.rs_meta" "$tmp/.rs_meta.bak" || true
+  fi
+
+  log "Aplicando parche (copiando archivos)"
+  sudo cp -rT "$tmp" "$WWW_BASE/$sitename" || true
+
+  # restore meta if overwritten
+  if [ -f "$tmp/.rs_meta.bak" ] && [ ! -f "$WWW_BASE/$sitename/.rs_meta" ]; then
+    sudo mv "$tmp/.rs_meta.bak" "$WWW_BASE/$sitename/.rs_meta" || true
+  fi
+
+  sudo chown -R www-data:www-data "$WWW_BASE/$sitename" 2>/dev/null || true
+  rm -rf "$tmp"
+  log "Parche aplicado con éxito a $sitename"
+  run_and_log sudo systemctl reload nginx || true
+}
+
+# --------------------------
+# Ports & Protocols
+# --------------------------
+show_protocols(){
+  log "Puertos y protocolos activos:"
   if command -v ss >/dev/null 2>&1; then
     run_and_log ss -tuln
   elif command -v netstat >/dev/null 2>&1; then
     run_and_log netstat -tuln
   else
-    log "No se encontró 'ss' ni 'netstat'. Instala 'iproute2' o 'net-tools'."
-    return 1
+    err "No está instalado ss ni netstat."
   fi
-
-  log ""
-  log "Mapeando puertos a servicios comunes (según /etc/services si está disponible):"
-  if [[ -f /etc/services ]]; then
-    # show top listening ports with mapping
-    run_and_log awk '/LISTEN/ {print}' /proc/net/tcp 2>/dev/null || true
-    log "Nota: para una vista más amigable usa: sudo ss -tulpen"
-  else
-    log "/etc/services no disponible para mapeo de puertos."
+  log "Mapeo rápido (/etc/services si está presente):"
+  if [ -f /etc/services ]; then
+    awk 'NR<=50{print}' /etc/services | tee -a "$LOGFILE"
   fi
 }
 
-action_install_patch() {
-  read -rp "Ruta local del paquete parche (.tar.gz) o URL (ENTER para cancelar) > " patch_path
-  if [[ -z "$patch_path" ]]; then
-    log "Patch no proporcionado. Cancelando."
-    return
-  fi
-
-  # If URL - try to download
-  local tmp_patch="/tmp/rs_patch_${TIMESTAMP}.tar.gz"
-  if [[ "$patch_path" =~ ^https?:// ]]; then
-    log "Descargando parche desde URL..."
-    if command -v curl >/dev/null 2>&1; then
-      run_and_log sudo curl -L -o "$tmp_patch" "$patch_path"
-    elif command -v wget >/dev/null 2>&1; then
-      run_and_log sudo wget -O "$tmp_patch" "$patch_path"
-    else
-      log "No hay curl/wget instalados. Instala curl o wget para descargar."
-      return 1
-    fi
-  else
-    if [[ -f "$patch_path" ]]; then
-      tmp_patch="$patch_path"
-    else
-      log "Archivo de parche no encontrado: $patch_path"
-      return 1
-    fi
-  fi
-
-  # Find installed sites and ask which to patch
-  echo "Sitios detectados en $WWW_BASE:"
-  ls -1 "$WWW_BASE" || true
-  read -rp "Nombre del sitio a actualizar (ej: ejemplo.com) > " sitename
-  if [[ -z "$sitename" || ! -d "$WWW_BASE/$sitename" ]]; then
-    log "Sitio inválido o no existe. Cancelando."
-    return 1
-  fi
-
-  local site_dir="$WWW_BASE/$sitename"
-  # backup current site
-  local bkup="$BACKUP_DIR/${sitename}_prepatch_${TIMESTAMP}.tar.gz"
-  log "Creando backup antes de parchear: $bkup"
-  tar -czf "$bkup" -C "$WWW_BASE" "$sitename"
-  log "Backup listo."
-
-  # Extract patch into temp and merge (preservando .rs_meta)
-  local tmpdir
-  tmpdir=$(mktemp -d /tmp/rs_patch_XXXX)
-  log "Extrayendo parche en $tmpdir"
-  tar -xzf "$tmp_patch" -C "$tmpdir"
-
-  log "Aplicando parche (fusionando archivos). Los archivos existentes serán sobrescritos si el parche así lo indica."
-  # Simple merge strategy: copy files from patch into site dir (overwrites). Preserve .rs_meta
-  if [[ -f "$site_dir/.rs_meta" ]]; then
-    cp -a "$site_dir/.rs_meta" "$tmpdir/.rs_meta.bak" || true
-  fi
-
-  run_and_log sudo cp -r "$tmpdir/." "$site_dir/"
-
-  # restore meta if not overwritten
-  if [[ -f "$tmpdir/.rs_meta.bak" && ! -f "$site_dir/.rs_meta" ]]; then
-    cp "$tmpdir/.rs_meta.bak" "$site_dir/.rs_meta" || true
-  fi
-
-  run_and_log sudo chown -R www-data:www-data "$site_dir" 2>/dev/null || true
-
-  rm -rf "$tmpdir"
-  log "Parche aplicado. Si el parche incluía configuración nginx revisa y recarga nginx si es necesario."
+# --------------------------
+# Uninstall site
+# --------------------------
+uninstall_site(){
+  read -rp "Nombre del sitio a desinstalar > " sitename
+  if [ -z "$sitename" ] || [ ! -d "$WWW_BASE/$sitename" ]; then err "Sitio inexistente."; return 1; fi
+  read -rp "¿Confirmas eliminar $sitename? escribe 'si' para confirmar: " confirm
+  if [ "$confirm" != "si" ]; then log "No confirmado. Abortando."; return 0; fi
+  backup_site "$sitename"
+  log "Eliminando $WWW_BASE/$sitename ..."
+  sudo rm -rf "$WWW_BASE/$sitename"
+  sudo rm -f "$NGINX_AVAILABLE/$sitename.conf" || true
+  sudo rm -f "$NGINX_ENABLED/$sitename.conf" || true
+  run_and_log sudo nginx -t || true
   run_and_log sudo systemctl reload nginx || true
-  log "Instalación de parche finalizada."
+  log "Sitio $sitename eliminado."
 }
 
-#######################
-# Main menu
-#######################
-main_menu() {
-  while true; do
-    cat <<MENU
+# --------------------------
+# Install flow
+# --------------------------
+action_install_site(){
+  read -rp "Nombre del sitio (ej: ejemplo.com) > " sitename
+  if [ -z "$sitename" ]; then err "Nombre inválido."; return 1; fi
+  read -rp "Encabezado (texto principal) > " header
+  read -rp "Correo de contacto > " contact
+  read -rp "Texto secundario/descripcion > " header_text
+  read -rp "URL imagen principal (ENTER para placeholder) > " img
+  [ -z "$img" ] && img="https://picsum.photos/640/420?random=1"
 
-===== RS - Instalador / Gestor =====
-Fecha: $(date +"%F %T")
-Log actual: $logfile
+  log "Preparando instalación para $sitename"
+  ensure_tools
+  ensure_nginx
+
+  echo "Elige tipo de sitio para instalar:"
+  echo "  1) HTML/CSS/JS (estático)"
+  echo "  2) PHP + NGINX (sitio con PHP)"
+  echo "  3) Node.js (servidor Node simple)"
+  echo "  4) Flexible: elegir en tiempo de instalación"
+  read -rp "Tipo (1/2/3/4) > " type
+  case "$type" in
+    1) generate_site_static "$sitename" "$header" "$contact" "$header_text" "$img" ;;
+    2)
+      log "Instalando PHP-FPM (si es necesario)"
+      if [ "$PKG_MANAGER" = "apt" ]; then install_pkgs php-fpm; else install_pkgs php php-fpm; fi
+      generate_site_php "$sitename" "$header" "$contact" "$header_text" "$img"
+      ;;
+    3)
+      log "Instalando Node.js runtime (si es necesario)"
+      # try minimal install attempt
+      if ! command -v node >/dev/null 2>&1; then
+        if [ "$PKG_MANAGER" = "apt" ]; then
+          install_pkgs nodejs npm || true
+        else
+          install_pkgs nodejs npm || true
+        fi
+      fi
+      generate_site_node "$sitename" "$header" "$contact" "$header_text" "$img"
+      ;;
+    4)
+      read -rp "Escoge tipo final (1=static,2=php,3=node) > " subtype
+      case "$subtype" in
+        1) generate_site_static "$sitename" "$header" "$contact" "$header_text" "$img" ;;
+        2)
+          if [ "$PKG_MANAGER" = "apt" ]; then install_pkgs php-fpm; else install_pkgs php php-fpm; fi
+          generate_site_php "$sitename" "$header" "$contact" "$header_text" "$img"
+          ;;
+        3)
+          if ! command -v node >/dev/null 2>&1; then install_pkgs nodejs npm || true; fi
+          generate_site_node "$sitename" "$header" "$contact" "$header_text" "$img"
+          ;;
+        *) err "Tipo inválido. Abortando."; return 1 ;;
+      esac
+      ;;
+    *) err "Opción inválida." ; return 1 ;;
+  esac
+
+  configure_nginx_for_site "$sitename"
+
+  # Simulated progress to show status
+  log "Finalizando instalación - aplicando permisos y comprobaciones"
+  start_spinner "Finalizando..."
+  sleep 0.6
+  stop_spinner
+  log "Instalación completada para $sitename. Revisa $LOGFILE"
+
+  echo ""
+  echo "${GREEN}Sitio instalado: http://$sitename${RESET}"
+  echo "${YEL}Si usas DNS local sin dominio, prueba con http://localhost o añade entrada en /etc/hosts${RESET}"
+  echo ""
+  # Offer Let's Encrypt
+  read -rp "¿Deseas intentar obtener certificado HTTPS con Let's Encrypt (certbot)? (si/no) > " want_cert
+  if [ "$want_cert" = "si" ]; then
+    if ! command -v certbot >/dev/null 2>&1; then
+      log "Instalando certbot..."
+      if [ "$PKG_MANAGER" = "apt" ]; then install_pkgs certbot python3-certbot-nginx; else install_pkgs certbot; fi
+    fi
+    if command -v certbot >/dev/null 2>&1; then
+      log "Intentando certbot --nginx para $sitename (requiere dominio apuntando al servidor)."
+      sudo certbot --nginx -d "$sitename" || err "Certbot falló o dominio no apunta correctamente."
+    else
+      err "Certbot no disponible."
+    fi
+  fi
+}
+
+# --------------------------
+# Install command tool (rs)
+# --------------------------
+install_command_tool(){
+  if [ "$(realpath "$0")" != "$CMD_TARGET" ]; then
+    log "Instalando comando rs en $CMD_TARGET"
+    sudo cp "$0" "$CMD_TARGET"
+    sudo chmod +x "$CMD_TARGET"
+    log "Comando 'rs' instalado. Ejecuta 'sudo rs' o solo 'rs' si usas root."
+  else
+    log "El script ya está en $CMD_TARGET"
+  fi
+}
+
+# --------------------------
+# View last log
+# --------------------------
+view_last_log(){
+  less "$LOGFILE"
+}
+
+# --------------------------
+# MAIN MENU
+# --------------------------
+main_menu(){
+  while true; do
+    clear
+    cat <<MENU
+${BOLD}RS - Instalador PRO (v2025.11.15)${RESET}
+Log actual: $LOGFILE
 
 1) Instalar SITIO WEB
 2) DESINSTALAR SITIO WEB
 3) PROTOCOLOS ACTIVOS
 4) INSTALAR PARCHE
 5) Ver último log
+6) Instalar comando 'rs' (alias)
 0) Salir
 
-Elige una opción y pulsa ENTER:
 MENU
     read -rp "> " opt
     case "$opt" in
-      1) action_install_site ;;
-      2) action_uninstall_site ;;
-      3) action_protocols_active ;;
-      4) action_install_patch ;;
-      5) less "$logfile" ;;
-      0) log "Saliendo."; break ;;
-      *) echo "Opción inválida." ;;
+      1) action_install_site=action_install_site; action_install_site ;;
+      2) uninstall_site ;;
+      3) show_protocols ;;
+      4) install_patch ;;
+      5) view_last_log ;;
+      6) install_command_tool ;;
+      0) log "Saliendo..."; break ;;
+      *) echo "Opción inválida"; sleep 1 ;;
     esac
     echo ""
-    read -rp "Presiona ENTER para continuar..." _
+    read -rp "Presiona ENTER para continuar..." _ || true
   done
 }
 
-#######################
-# bootstrap - crear alias/comando 'rs' si se invoca con --install-cmd
-#######################
-install_command_tool() {
-  # Instala el script en /usr/local/bin/rs (si no está ya)
-  local target="/usr/local/bin/rs"
-  if [[ "$(realpath "$0")" != "$target" ]]; then
-    log "Instalando comando rs en $target"
-    sudo cp "$0" "$target"
-    sudo chmod +x "$target"
-    log "Comando rs instalado. Puedes ejecutar 'sudo rs' desde ahora."
-  else
-    log "El script ya está en $target"
-  fi
-}
-
-#######################
-# Entrypoint
-#######################
-if [[ "${1-}" == "--install-cmd" ]]; then
+# If invoked with --install-cmd, install and exit
+if [ "${1-}" = "--install-cmd" ]; then
   install_command_tool
   exit 0
 fi
 
-# require sudo for operations needing it, but allow read-only operations without
-if [[ $EUID -ne 0 ]]; then
-  echo "Algunas operaciones requieren privilegios de administrador (sudo)."
-  echo "Se te pedirá contraseña cuando sea necesario."
+# If not running as root, warn (some operations require sudo)
+if [ "$EUID" -ne 0 ]; then
+  echo "${YEL}Nota: algunas operaciones requerirán sudo. Ejecuta 'sudo rs' para que todo funcione sin pedir contraseña constantemente.${RESET}"
 fi
 
+# start
 main_menu
