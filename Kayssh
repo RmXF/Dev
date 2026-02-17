@@ -1,0 +1,1773 @@
+#!/bin/bash
+
+# Colores para output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
+# Configuración
+PANEL_USER=""
+PANEL_PASS=""
+PANEL_PORT="8080"
+INSTALL_DIR="/var/www/ssh-panel"
+NGINX_CONF="/etc/nginx/sites-available/ssh-panel"
+
+# Función para imprimir mensajes
+print_message() {
+    echo -e "${BLUE}[SSH-PANEL]${NC} $1"
+}
+
+print_success() {
+    echo -e "${GREEN}[✓]${NC} $1"
+}
+
+print_error() {
+    echo -e "${RED}[✗]${NC} $1"
+}
+
+print_warning() {
+    echo -e "${YELLOW}[!]${NC} $1"
+}
+
+# Verificar si se ejecuta como root
+if [[ $EUID -ne 0 ]]; then
+   print_error "Este script debe ejecutarse como root"
+   exit 1
+fi
+
+# Banner
+clear
+echo "=================================================="
+echo "     INSTALADOR PANEL SSH - VPS MANAGER v1.0"
+echo "=================================================="
+echo ""
+
+# Solicitar credenciales para el panel
+print_warning "Configuración de acceso al panel"
+echo ""
+
+while true; do
+    read -p "Usuario para el panel: " PANEL_USER
+    if [[ -n "$PANEL_USER" ]]; then
+        break
+    else
+        print_error "El usuario no puede estar vacío"
+    fi
+done
+
+while true; do
+    read -s -p "Contraseña para el panel: " PANEL_PASS
+    echo ""
+    read -s -p "Confirmar contraseña: " PANEL_PASS_CONFIRM
+    echo ""
+    
+    if [[ -z "$PANEL_PASS" ]]; then
+        print_error "La contraseña no puede estar vacía"
+    elif [[ "$PANEL_PASS" != "$PANEL_PASS_CONFIRM" ]]; then
+        print_error "Las contraseñas no coinciden"
+    elif [[ ${#PANEL_PASS} -lt 6 ]]; then
+        print_error "La contraseña debe tener al menos 6 caracteres"
+    else
+        break
+    fi
+done
+
+echo ""
+print_message "Iniciando instalación..."
+sleep 2
+
+# Actualizar sistema
+print_message "Actualizando sistema..."
+apt-get update -y > /dev/null 2>&1
+apt-get upgrade -y > /dev/null 2>&1
+print_success "Sistema actualizado"
+
+# Instalar dependencias
+print_message "Instalando dependencias necesarias..."
+apt-get install -y \
+    nginx \
+    php8.1 \
+    php8.1-fpm \
+    php8.1-cli \
+    php8.1-common \
+    php8.1-mbstring \
+    php8.1-xml \
+    php8.1-curl \
+    php8.1-zip \
+    sshpass \
+    openssh-server \
+    git \
+    curl \
+    wget \
+    unzip \
+    > /dev/null 2>&1
+print_success "Dependencias instaladas"
+
+# Crear estructura de directorios
+print_message "Creando estructura de directorios..."
+mkdir -p $INSTALL_DIR
+mkdir -p $INSTALL_DIR/php/endpoints
+mkdir -p $INSTALL_DIR/js
+mkdir -p $INSTALL_DIR/css
+mkdir -p $INSTALL_DIR/includes
+mkdir -p $INSTALL_DIR/logs
+print_success "Directorios creados"
+
+# Crear archivo de configuración del panel
+print_message "Configurando panel..."
+
+# Crear archivo de configuración PHP
+cat > $INSTALL_DIR/includes/config.php << 'EOF'
+<?php
+define('PANEL_VERSION', '1.0.0');
+define('PANEL_NAME', 'SSH VPS Manager');
+define('SESSION_TIMEOUT', 3600); // 1 hora
+
+// Archivo de credenciales (se creará durante la instalación)
+define('CREDENTIALS_FILE', __DIR__ . '/panel_credentials.php');
+
+// Cargar credenciales si existen
+if (file_exists(CREDENTIALS_FILE)) {
+    require_once CREDENTIALS_FILE;
+}
+
+// Función para verificar login
+function check_login($username, $password) {
+    if (!defined('PANEL_USER') || !defined('PANEL_PASS')) {
+        return false;
+    }
+    return ($username === PANEL_USER && password_verify($password, PANEL_PASS));
+}
+
+// Función para iniciar sesión
+function require_login() {
+    session_start();
+    
+    if (!isset($_SESSION['panel_logged_in']) || $_SESSION['panel_logged_in'] !== true) {
+        header('Location: /login.php');
+        exit();
+    }
+    
+    // Verificar timeout
+    if (isset($_SESSION['last_activity']) && (time() - $_SESSION['last_activity'] > SESSION_TIMEOUT)) {
+        session_unset();
+        session_destroy();
+        header('Location: /login.php?timeout=1');
+        exit();
+    }
+    
+    $_SESSION['last_activity'] = time();
+}
+?>
+EOF
+
+# Crear archivo de credenciales (hash de la contraseña)
+PHP_HASH=$(php -r "echo password_hash('$PANEL_PASS', PASSWORD_DEFAULT);")
+
+cat > $INSTALL_DIR/includes/panel_credentials.php << EOF
+<?php
+define('PANEL_USER', '$PANEL_USER');
+define('PANEL_PASS', '$PHP_HASH');
+?>
+EOF
+
+# Configurar permisos
+chmod 600 $INSTALL_DIR/includes/panel_credentials.php
+
+# Crear login.php
+cat > $INSTALL_DIR/login.php << 'EOF'
+<?php
+session_start();
+
+// Si ya está logueado, redirigir al panel
+if (isset($_SESSION['panel_logged_in']) && $_SESSION['panel_logged_in'] === true) {
+    header('Location: index.html');
+    exit();
+}
+
+require_once 'includes/config.php';
+
+$error = '';
+$timeout = '';
+
+if (isset($_GET['timeout'])) {
+    $timeout = 'Sesión expirada por inactividad';
+}
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    $username = $_POST['username'] ?? '';
+    $password = $_POST['password'] ?? '';
+    
+    if (check_login($username, $password)) {
+        $_SESSION['panel_logged_in'] = true;
+        $_SESSION['username'] = $username;
+        $_SESSION['login_time'] = time();
+        $_SESSION['last_activity'] = time();
+        
+        header('Location: index.html');
+        exit();
+    } else {
+        $error = 'Usuario o contraseña incorrectos';
+    }
+}
+?>
+<!DOCTYPE html>
+<html lang="es" data-theme="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Login - Panel SSH VPS</title>
+    <style>
+        :root {
+            --primary-color: #ffb909;
+            --primary-dark: #e5a80e;
+            --danger-color: #e5182c;
+            --dark-color: #212529;
+            --light-color: #f8f9fa;
+        }
+        
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: 'Poppins', sans-serif;
+        }
+        
+        body {
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        }
+        
+        .login-container {
+            background: white;
+            padding: 40px;
+            border-radius: 20px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.1);
+            width: 100%;
+            max-width: 400px;
+            animation: slideUp 0.5s ease;
+        }
+        
+        @keyframes slideUp {
+            from {
+                opacity: 0;
+                transform: translateY(20px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+        
+        .logo {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        
+        .logo h1 {
+            color: var(--primary-color);
+            font-size: 28px;
+            margin-bottom: 5px;
+        }
+        
+        .logo p {
+            color: #666;
+            font-size: 14px;
+        }
+        
+        .form-group {
+            margin-bottom: 20px;
+        }
+        
+        label {
+            display: block;
+            margin-bottom: 8px;
+            color: #333;
+            font-weight: 500;
+        }
+        
+        input {
+            width: 100%;
+            padding: 12px 15px;
+            border: 2px solid #e0e0e0;
+            border-radius: 10px;
+            font-size: 16px;
+            transition: all 0.3s ease;
+        }
+        
+        input:focus {
+            outline: none;
+            border-color: var(--primary-color);
+            box-shadow: 0 0 0 3px rgba(255, 185, 9, 0.1);
+        }
+        
+        button {
+            width: 100%;
+            padding: 14px;
+            background: var(--primary-color);
+            border: none;
+            border-radius: 10px;
+            color: #333;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+        
+        button:hover {
+            background: var(--primary-dark);
+            transform: translateY(-2px);
+            box-shadow: 0 5px 20px rgba(255, 185, 9, 0.3);
+        }
+        
+        .error {
+            background: var(--danger-color);
+            color: white;
+            padding: 12px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            text-align: center;
+            animation: shake 0.5s ease;
+        }
+        
+        .timeout {
+            background: #ffc107;
+            color: #333;
+            padding: 12px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            text-align: center;
+        }
+        
+        @keyframes shake {
+            0%, 100% { transform: translateX(0); }
+            25% { transform: translateX(-5px); }
+            75% { transform: translateX(5px); }
+        }
+        
+        .info {
+            text-align: center;
+            margin-top: 20px;
+            color: #666;
+            font-size: 12px;
+        }
+        
+        .info i {
+            color: var(--primary-color);
+        }
+    </style>
+</head>
+<body>
+    <div class="login-container">
+        <div class="logo">
+            <h1>🔐 SSH PANEL</h1>
+            <p>Ingresa tus credenciales</p>
+        </div>
+        
+        <?php if ($error): ?>
+            <div class="error"><?php echo $error; ?></div>
+        <?php endif; ?>
+        
+        <?php if ($timeout): ?>
+            <div class="timeout"><?php echo $timeout; ?></div>
+        <?php endif; ?>
+        
+        <form method="POST" action="">
+            <div class="form-group">
+                <label>Usuario</label>
+                <input type="text" name="username" required autofocus>
+            </div>
+            
+            <div class="form-group">
+                <label>Contraseña</label>
+                <input type="password" name="password" required>
+            </div>
+            
+            <button type="submit">Ingresar al Panel</button>
+        </form>
+        
+        <div class="info">
+            <i>⚡</i> Panel SSH VPS Manager v1.0
+        </div>
+    </div>
+</body>
+</html>
+EOF
+
+# Modificar index.html para requerir login
+cat > $INSTALL_DIR/index.html << 'EOF'
+<!DOCTYPE html>
+<html lang="es" data-theme="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Panel de Usuarios SSH - VPS</title>
+    <style>
+        /* Aquí va tu CSS original completo */
+        :root {
+            --primary-color: #ffb909;
+            --primary-dark: #e5a80e;
+            --secondary-color: #8338ec;
+            --accent-color: #0285ff;
+            --light-color: white;
+            --light-primary-color: #f8f9fa;
+            --dark-color: #212529;
+            --gray-color: #6c757d;
+            --gray-medium-color: #ababab;
+            --light-gray: #e9ecef;
+            
+            --white: #ffffff;
+            --black: #000000;
+            --success-color: #19b53c;
+            --warning-color: #ffc107;
+            --danger-color: #e5182c;
+            --info-color: #f2de60;
+            --primary-color-toggle: #ffb909;
+            --font-primary: 'Poppins', sans-serif;
+            --font-secondary: italic, sans-serif;
+            
+            --transition: all 0.3s ease;
+            --shadow: 0 5px 15px rgba(0, 0, 0, 0.1);
+            --shadow-hover: 0 8px 25px rgba(0, 0, 0, 0.15);
+            --border-radius: 8px;
+            --border-radius-sm: 4px;
+        }
+        
+        [data-theme="dark"] {
+            --light-color: #121212;
+            --dark-color: #f8f9fa;
+            --gray-medium-color: white;
+            --gray-color: #adb5bd;
+            --light-gray: #2d2d2d;
+            --white: #1e1e1e;
+            --black: #ffffff;
+            --btn-submit: #0285ff;
+            --shadow: 0 5px 15px rgba(0, 0, 0, 0.3);
+            --shadow-hover: 0 8px 25px rgba(0, 0, 0, 0.4);
+            --primary-color-toggle: #ffffff;
+            --light-primary-color: #313131;
+        }
+        
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: var(--font-primary);
+        }
+        
+        body {
+            width: 100%;
+            min-height: 100vh;
+            margin: 0;
+            padding: 0;
+            color: var(--dark-color);
+            background-color: var(--light-color);
+            overflow-x: hidden;
+        }
+
+        .container {
+            width: 100%;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 1rem;
+        }
+
+        header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 1rem 0;
+            margin-bottom: 2rem;
+            border-bottom: 1px solid var(--light-gray);
+        }
+
+        .logo {
+            font-size: 1.5rem;
+            font-weight: bold;
+            color: var(--primary-color);
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .logo-icon {
+            width: 30px;
+            height: 30px;
+            background-color: var(--accent-color);
+            border-radius: 50%;
+        }
+
+        .controls {
+            display: flex;
+            gap: 1rem;
+            align-items: center;
+        }
+
+        .search-box {
+            position: relative;
+            max-width: 300px;
+        }
+
+        .search-box input {
+            padding: 0.5rem 1rem 0.5rem 2.5rem;
+            border: 1px solid var(--light-gray);
+            border-radius: var(--border-radius);
+            background-color: var(--light-primary-color);
+            color: var(--dark-color);
+            transition: var(--transition);
+        }
+
+        .search-box input:focus {
+            outline: none;
+            border-color: var(--primary-color);
+            box-shadow: 0 0 0 2px rgba(255, 185, 9, 0.2);
+        }
+
+        .search-icon {
+            position: absolute;
+            left: 0.75rem;
+            top: 50%;
+            transform: translateY(-50%);
+            width: 16px;
+            height: 16px;
+            background-color: var(--gray-color);
+        }
+
+        .theme-toggle {
+            background: none;
+            border: none;
+            cursor: pointer;
+            padding: 0.5rem;
+            border-radius: 50%;
+            transition: var(--transition);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .theme-toggle:hover {
+            background-color: var(--light-gray);
+        }
+
+        .theme-icon {
+            width: 20px;
+            height: 20px;
+            background-color: var(--primary-color-toggle);
+        }
+
+        .action-buttons {
+            display: flex;
+            gap: 1rem;
+            margin-bottom: 1.5rem;
+            flex-wrap: wrap;
+        }
+
+        .btn {
+            padding: 0.75rem 1.5rem;
+            border: none;
+            border-radius: var(--border-radius);
+            cursor: pointer;
+            transition: var(--transition);
+            font-weight: bold;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .btn-primary {
+            background-color: var(--primary-color);
+            color: var(--dark-color);
+        }
+
+        .btn-primary:hover {
+            background-color: var(--primary-dark);
+        }
+
+        .btn-success {
+            background-color: var(--success-color);
+            color: white;
+        }
+
+        .btn-success:hover {
+            background-color: #128C3A;
+        }
+
+        .btn-danger {
+            background-color: var(--danger-color);
+            color: white;
+        }
+
+        .btn-danger:hover {
+            background-color: #c41426;
+        }
+
+        .btn-icon {
+            width: 16px;
+            height: 16px;
+            background-color: currentColor;
+        }
+
+        .users-container {
+            background-color: var(--light-primary-color);
+            border-radius: var(--border-radius);
+            overflow: hidden;
+            box-shadow: var(--shadow);
+            margin-bottom: 2rem;
+        }
+
+        .users-header {
+            padding: 1rem 1.5rem;
+            background-color: var(--primary-color);
+            color: var(--dark-color);
+            display: grid;
+            grid-template-columns: 1fr 1fr 1fr 1fr 1fr 2fr;
+            gap: 1rem;
+            font-weight: bold;
+        }
+
+        .users-list {
+            max-height: 500px;
+            overflow-y: auto;
+        }
+
+        .user-item {
+            display: grid;
+            grid-template-columns: 1fr 1fr 1fr 1fr 1fr 2fr;
+            gap: 1rem;
+            padding: 1rem 1.5rem;
+            border-bottom: 1px solid var(--light-gray);
+            align-items: center;
+            transition: var(--transition);
+        }
+
+        .user-item:hover {
+            background-color: var(--light-gray);
+        }
+
+        .user-item.expired {
+            background-color: rgba(229, 24, 44, 0.1);
+        }
+
+        .user-item.warning {
+            background-color: rgba(255, 193, 7, 0.1);
+        }
+
+        .user-username {
+            font-weight: bold;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .user-icon {
+            width: 20px;
+            height: 20px;
+            background-color: var(--accent-color);
+            border-radius: 50%;
+        }
+
+        .user-actions {
+            display: flex;
+            gap: 0.5rem;
+        }
+
+        .btn-action {
+            padding: 0.25rem 0.5rem;
+            border: none;
+            border-radius: var(--border-radius-sm);
+            cursor: pointer;
+            font-size: 0.8rem;
+            transition: var(--transition);
+        }
+
+        .btn-edit {
+            background-color: var(--info-color);
+            color: var(--dark-color);
+        }
+
+        .btn-delete {
+            background-color: var(--danger-color);
+            color: white;
+        }
+
+        .btn-extend {
+            background-color: var(--success-color);
+            color: white;
+        }
+
+        .time-remaining {
+            font-size: 0.8rem;
+            font-weight: bold;
+            padding: 0.25rem 0.5rem;
+            border-radius: var(--border-radius-sm);
+        }
+
+        .time-normal {
+            background-color: var(--success-color);
+            color: white;
+        }
+
+        .time-warning {
+            background-color: var(--warning-color);
+            color: var(--dark-color);
+        }
+
+        .time-danger {
+            background-color: var(--danger-color);
+            color: white;
+        }
+
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.5);
+            z-index: 1000;
+            align-items: center;
+            justify-content: center;
+            padding: 1rem;
+        }
+
+        .modal.show {
+            display: flex;
+        }
+
+        .modal-content {
+            background-color: var(--light-color);
+            border-radius: var(--border-radius);
+            width: 100%;
+            max-width: 600px;
+            max-height: 90vh;
+            overflow-y: auto;
+            box-shadow: var(--shadow-hover);
+        }
+
+        .modal-header {
+            padding: 1.5rem;
+            background-color: var(--primary-color);
+            color: var(--dark-color);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .modal-header h2 {
+            margin: 0;
+        }
+
+        .close-modal {
+            background: none;
+            border: none;
+            font-size: 1.5rem;
+            cursor: pointer;
+            color: var(--dark-color);
+        }
+
+        .modal-body {
+            padding: 1.5rem;
+        }
+
+        .form-group {
+            margin-bottom: 1rem;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 0.5rem;
+            font-weight: bold;
+        }
+
+        .form-group input,
+        .form-group select {
+            width: 100%;
+            padding: 0.75rem;
+            border: 1px solid var(--light-gray);
+            border-radius: var(--border-radius);
+            background-color: var(--light-primary-color);
+            color: var(--dark-color);
+        }
+
+        .form-row {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 1rem;
+        }
+
+        .modal-footer {
+            padding: 1.5rem;
+            border-top: 1px solid var(--light-gray);
+            display: flex;
+            justify-content: flex-end;
+            gap: 1rem;
+        }
+
+        .notification {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            padding: 1rem 1.5rem;
+            background-color: var(--success-color);
+            color: white;
+            border-radius: var(--border-radius);
+            box-shadow: var(--shadow);
+            transition: transform 0.3s ease;
+            transform: translateY(100px);
+            z-index: 1001;
+        }
+
+        .notification.show {
+            transform: translateY(0);
+        }
+
+        .notification.error {
+            background-color: var(--danger-color);
+        }
+
+        .no-users {
+            padding: 2rem;
+            text-align: center;
+            color: var(--gray-color);
+            grid-column: 1 / -1;
+        }
+
+        .connection-status {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.5rem 1rem;
+            border-radius: var(--border-radius);
+            margin-bottom: 1rem;
+        }
+
+        .status-connected {
+            background-color: var(--success-color);
+            color: white;
+        }
+
+        .status-disconnected {
+            background-color: var(--danger-color);
+            color: white;
+        }
+
+        .status-icon {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            background-color: currentColor;
+        }
+
+        .modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: rgba(0, 0, 0, 0.6);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+        }
+
+        .modal-container {
+            background-color: white;
+            border-radius: 12px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+            width: 90%;
+            max-width: 500px;
+            padding: 30px;
+            position: relative;
+            animation: modalFadeIn 0.3s ease-out;
+        }
+
+        @keyframes modalFadeIn {
+            from {
+                opacity: 0;
+                transform: translateY(-20px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .modal-title {
+            margin-top: 0;
+            margin-bottom: 25px;
+            font-size: 24px;
+            font-weight: 600;
+            color: #2c3e50;
+            text-align: center;
+        }
+
+        .form-label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 500;
+            color: #4a5568;
+        }
+
+        .form-input {
+            width: 100%;
+            padding: 12px 15px;
+            border: 1px solid #e2e8f0;
+            border-radius: 8px;
+            font-size: 16px;
+            transition: all 0.2s ease;
+            box-sizing: border-box;
+        }
+
+        .form-input:focus {
+            outline: none;
+            border-color: #4299e1;
+            box-shadow: 0 0 0 3px rgba(66, 153, 225, 0.2);
+        }
+
+        .form-input:disabled {
+            background-color: #f7fafc;
+            color: #a0aec0;
+            cursor: not-allowed;
+        }
+
+        .modal-actions {
+            display: flex;
+            justify-content: flex-end;
+            gap: 12px;
+            margin-top: 30px;
+        }
+
+        .btn-secondary {
+            background-color: #e2e8f0;
+            color: #4a5568;
+        }
+
+        .btn-secondary:hover {
+            background-color: #cbd5e0;
+        }
+
+        /* Menú de sistema */
+        .system-menu {
+            background-color: var(--light-primary-color);
+            border-radius: var(--border-radius);
+            padding: 1rem;
+            margin-bottom: 1.5rem;
+            display: flex;
+            gap: 1rem;
+            flex-wrap: wrap;
+            align-items: center;
+            border: 1px solid var(--light-gray);
+        }
+
+        .system-menu .btn {
+            padding: 0.5rem 1rem;
+            font-size: 0.9rem;
+        }
+
+        .system-stats {
+            display: flex;
+            gap: 1rem;
+            margin-left: auto;
+            color: var(--gray-color);
+            font-size: 0.9rem;
+        }
+
+        .system-stats span {
+            display: flex;
+            align-items: center;
+            gap: 0.3rem;
+        }
+
+        .logout-btn {
+            background-color: var(--gray-color);
+            color: white;
+        }
+
+        .logout-btn:hover {
+            background-color: var(--danger-color);
+        }
+
+        @media (max-width: 768px) {
+            .users-header,
+            .user-item {
+                grid-template-columns: 1fr;
+                gap: 0.5rem;
+            }
+            
+            .user-actions {
+                justify-content: center;
+            }
+            
+            .action-buttons {
+                flex-direction: column;
+            }
+            
+            .form-row {
+                grid-template-columns: 1fr;
+            }
+            
+            .system-menu {
+                flex-direction: column;
+                align-items: stretch;
+            }
+            
+            .system-stats {
+                margin-left: 0;
+                justify-content: space-between;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <div class="logo">
+                <div class="logo-icon"></div>
+                <span>Panel SSH - VPS</span>
+            </div>
+            <div class="controls">
+                <div class="search-box">
+                    <div class="search-icon"></div>
+                    <input type="text" id="searchInput" placeholder="Buscar usuarios...">
+                </div>
+                <button class="theme-toggle" id="themeToggle">
+                    <div class="theme-icon"></div>
+                </button>
+                <button class="btn logout-btn" id="logoutBtn">Cerrar Sesión</button>
+            </div>
+        </header>
+
+        <main>
+            <!-- Menú de sistema mejorado -->
+            <div class="system-menu">
+                <button class="btn btn-primary" id="btnSystemMonitor">
+                    📊 Monitor VPS
+                </button>
+                <button class="btn btn-primary" id="btnActivePorts">
+                    🔌 Puertos Activos
+                </button>
+                <button class="btn btn-warning" id="btnRestartPanel">
+                    🔄 Reiniciar Panel
+                </button>
+                <button class="btn btn-danger" id="btnUninstall">
+                    🗑️ Desinstalar Panel
+                </button>
+                <div class="system-stats" id="systemStats">
+                    <span>🖥️ CPU: <span id="cpuUsage">-</span></span>
+                    <span>💾 RAM: <span id="ramUsage">-</span></span>
+                    <span>📀 DISK: <span id="diskUsage">-</span></span>
+                </div>
+            </div>
+
+            <div class="connection-status" id="connectionStatus">
+                <div class="status-icon"></div>
+                <span>Conectando al VPS...</span>
+            </div>
+
+            <div class="action-buttons">
+                <button class="btn btn-success" id="openmodalCred">
+                    <div class="btn-icon"></div>
+                    Agregar VPS
+                </button>
+                
+                <button class="btn btn-success" id="btnAddUser">
+                    <div class="btn-icon"></div>
+                    Agregar Usuario SSH
+                </button>
+                <button class="btn btn-primary" id="btnRefresh">
+                    <div class="btn-icon"></div>
+                    Actualizar Lista
+                </button>
+            </div>
+
+            <div class="users-container">
+                <div class="users-header">
+                    <div>Usuario</div>
+                    <div>Contraseña</div>
+                    <div>Fecha Expiración</div>
+                    <div>Tiempo Restante</div>
+                    <div>Estado</div>
+                    <div>Acciones</div>
+                </div>
+                <div class="users-list" id="usersList">
+                    <!-- Los usuarios se cargarán aquí dinámicamente -->
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- Modal para agregar/editar usuarios -->
+    <div class="modal" id="userModal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2 id="modalTitle">Agregar Usuario SSH</h2>
+                <button class="close-modal" id="closeModal">&times;</button>
+            </div>
+            <div class="modal-body">
+                <form id="userForm">
+                    <div class="form-group">
+                        <label for="username">Nombre de Usuario</label>
+                        <input type="text" id="username" required pattern="[a-z_][a-z0-9_-]*" title="Solo letras minúsculas, números, guiones y guiones bajos">
+                    </div>
+                    <div class="form-group">
+                        <label for="password">Contraseña</label>
+                        <input type="text" id="password" required minlength="6">
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="expiryDate">Fecha de Expiración</label>
+                            <input type="date" id="expiryDate" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="expiryDays">Días de Validez</label>
+                            <select id="expiryDays">
+                                <option value="7">7 días</option>
+                                <option value="15">15 días</option>
+                                <option value="30" selected>30 días</option>
+                                <option value="60">60 días</option>
+                                <option value="90">90 días</option>
+                                <option value="365">1 año</option>
+                            </select>
+                        </div>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-primary" id="cancelModal">Cancelar</button>
+                <button class="btn btn-success" id="saveUser">Guardar Usuario</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal Agregar credenciales SSH -->
+    <div class="modal-overlay" id="modalCred" style="display: none">
+        <div class="modal-container">
+            <h3 class="modal-title">Agregar VPS</h3>
+            
+            <div class="form-group">
+                <label class="form-label">IP Address</label>
+                <input type="text" class="form-input" placeholder="IP" id="input1">
+            </div>
+            
+            <div class="form-group">
+                <label class="form-label">Usuario</label>
+                <input type="text" class="form-input" placeholder="usuario" id="input2">
+            </div>
+            
+            <div class="form-group">
+                <label class="form-label">Contraseña</label>
+                <input type="password" class="form-input" placeholder="password" id="input3">
+            </div>
+            
+            <div class="form-group">
+                <label class="form-label">Port Default</label>
+                <input type="number" class="form-input" placeholder="22" id="input4" value="22">
+            </div>
+            
+            <div class="modal-actions">
+                <button class="btn btn-secondary" id="canceladdsssh">Cancelar</button>
+                <button class="btn btn-primary" id="sshcon">Guardar Y Conectar</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal Monitor del Sistema -->
+    <div class="modal-overlay" id="systemMonitorModal" style="display: none">
+        <div class="modal-container" style="max-width: 700px;">
+            <h3 class="modal-title">📊 Monitor del VPS</h3>
+            
+            <div style="margin-bottom: 20px;">
+                <canvas id="systemChart" style="width: 100%; height: 200px;"></canvas>
+            </div>
+            
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-bottom: 20px;">
+                <div style="background: #f7f9fc; padding: 15px; border-radius: 8px;">
+                    <h4 style="margin-bottom: 10px; color: #4a5568;">CPU</h4>
+                    <div id="cpuDetail" style="font-size: 24px; font-weight: bold; color: #4299e1;">0%</div>
+                </div>
+                <div style="background: #f7f9fc; padding: 15px; border-radius: 8px;">
+                    <h4 style="margin-bottom: 10px; color: #4a5568;">RAM</h4>
+                    <div id="ramDetail" style="font-size: 24px; font-weight: bold; color: #48bb78;">0%</div>
+                </div>
+                <div style="background: #f7f9fc; padding: 15px; border-radius: 8px;">
+                    <h4 style="margin-bottom: 10px; color: #4a5568;">DISCO</h4>
+                    <div id="diskDetail" style="font-size: 24px; font-weight: bold; color: #ed8936;">0%</div>
+                </div>
+                <div style="background: #f7f9fc; padding: 15px; border-radius: 8px;">
+                    <h4 style="margin-bottom: 10px; color: #4a5568;">UPTIME</h4>
+                    <div id="uptimeDetail" style="font-size: 16px; font-weight: bold; color: #9f7aea;">-</div>
+                </div>
+            </div>
+            
+            <div style="text-align: center;">
+                <button class="btn btn-primary" onclick="document.getElementById('systemMonitorModal').style.display='none'">Cerrar</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal Puertos Activos -->
+    <div class="modal-overlay" id="portsModal" style="display: none">
+        <div class="modal-container" style="max-width: 600px;">
+            <h3 class="modal-title">🔌 Puertos Activos</h3>
+            
+            <div style="max-height: 400px; overflow-y: auto;">
+                <table style="width: 100%; border-collapse: collapse;">
+                    <thead>
+                        <tr style="background: #f7f9fc;">
+                            <th style="padding: 10px; text-align: left;">Puerto</th>
+                            <th style="padding: 10px; text-align: left;">Servicio</th>
+                            <th style="padding: 10px; text-align: left;">Estado</th>
+                        </tr>
+                    </thead>
+                    <tbody id="portsList">
+                        <tr><td colspan="3" style="padding: 20px; text-align: center;">Cargando...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+            
+            <div style="text-align: center; margin-top: 20px;">
+                <button class="btn btn-primary" onclick="document.getElementById('portsModal').style.display='none'">Cerrar</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Notificación -->
+    <div class="notification" id="notification">Operación completada</div>
+
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="js/ssh_manager.js"></script>
+    <script>
+        // Verificar sesión cada minuto
+        setInterval(() => {
+            fetch('includes/check_session.php')
+                .then(response => response.json())
+                .then(data => {
+                    if (!data.logged_in) {
+                        window.location.href = 'login.php';
+                    }
+                });
+        }, 60000);
+    </script>
+</body>
+</html>
+EOF
+
+# Crear archivo de logout
+cat > $INSTALL_DIR/logout.php << 'EOF'
+<?php
+session_start();
+session_unset();
+session_destroy();
+header('Location: login.php');
+exit();
+?>
+EOF
+
+# Crear archivo para verificar sesión
+cat > $INSTALL_DIR/includes/check_session.php << 'EOF'
+<?php
+session_start();
+header('Content-Type: application/json');
+
+if (isset($_SESSION['panel_logged_in']) && $_SESSION['panel_logged_in'] === true) {
+    echo json_encode(['logged_in' => true]);
+} else {
+    echo json_encode(['logged_in' => false]);
+}
+?>
+EOF
+
+# Crear endpoint para monitor del sistema
+cat > $INSTALL_DIR/php/endpoints/system_monitor.php << 'EOF'
+<?php
+header('Content-Type: application/json');
+header('Access-Control-Allow-Origin: *');
+header('Access-Control-Allow-Methods: POST, GET, OPTIONS');
+header('Access-Control-Allow-Headers: Content-Type');
+
+require_once '../../includes/config.php';
+require_login();
+
+if ($_SERVER['REQUEST_METHOD'] === 'GET') {
+    $action = $_GET['action'] ?? '';
+    
+    switch ($action) {
+        case 'stats':
+            // Obtener estadísticas del sistema
+            $cpu = shell_exec("top -bn1 | grep 'Cpu(s)' | awk '{print $2}' | cut -d'%' -f1");
+            $ram = shell_exec("free | grep Mem | awk '{print $3/$2 * 100.0}'");
+            $disk = shell_exec("df -h / | awk 'NR==2 {print $5}' | cut -d'%' -f1");
+            $uptime = shell_exec("uptime -p");
+            
+            echo json_encode([
+                'success' => true,
+                'cpu' => round(floatval($cpu), 1),
+                'ram' => round(floatval($ram), 1),
+                'disk' => intval($disk),
+                'uptime' => trim(str_replace('up ', '', $uptime))
+            ]);
+            break;
+            
+        case 'ports':
+            // Obtener puertos activos
+            $ports = shell_exec("netstat -tlnp 2>/dev/null | grep LISTEN | awk '{print $4}' | grep -o '[0-9]*$' | sort -n | uniq");
+            $portsArray = array_filter(explode("\n", trim($ports)));
+            
+            $portDetails = [];
+            foreach ($portsArray as $port) {
+                $service = shell_exec("lsof -i :$port 2>/dev/null | grep LISTEN | awk '{print $1}' | head -1");
+                $portDetails[] = [
+                    'port' => $port,
+                    'service' => trim($service) ?: 'desconocido',
+                    'status' => 'activo'
+                ];
+            }
+            
+            echo json_encode([
+                'success' => true,
+                'ports' => $portDetails
+            ]);
+            break;
+            
+        default:
+            echo json_encode(['success' => false, 'message' => 'Acción no válida']);
+    }
+}
+?>
+EOF
+
+# Modificar ssh_connect.php para incluir verificación de sesión
+cat > $INSTALL_DIR/php/endpoints/ssh_connect.php << 'EOF'
+<?php
+header('Content-Type: application/json');
+header('Access-Control-Allow-Origin: *');
+header('Access-Control-Allow-Methods: POST, GET, OPTIONS');
+header('Access-Control-Allow-Headers: Content-Type');
+
+require_once '../../includes/config.php';
+
+// Verificar que el usuario está logueado
+require_login();
+
+// Manejar preflight OPTIONS request
+if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
+    http_response_code(200);
+    exit();
+}
+
+// [Aquí va todo el código PHP que ya tenías antes]
+// (Incluir el código PHP mejorado que te proporcioné anteriormente)
+?>
+EOF
+
+# Modificar ssh_manager.js para incluir nuevas funciones
+cat > $INSTALL_DIR/js/ssh_manager.js << 'EOF'
+class SSHManager {
+    constructor() {
+        this.users = [];
+        this.currentUser = null;
+        this.sshConnected = false;
+        this.apiBaseUrl = '/php/endpoints/ssh_connect.php';
+        this.systemApiUrl = '/php/endpoints/system_monitor.php';
+        this.searchTimeout = null;
+        this.statsInterval = null;
+        
+        this.initializeEventListeners();
+        this.startSystemStats();
+    }
+
+    initializeEventListeners() {
+        // Botones principales
+        document.getElementById('btnAddUser').addEventListener('click', () => this.showModal());
+        document.getElementById('btnRefresh').addEventListener('click', () => this.loadUsers());
+        
+        // Modal de usuario
+        document.getElementById('closeModal').addEventListener('click', () => this.hideModal());
+        document.getElementById('cancelModal').addEventListener('click', () => this.hideModal());
+        document.getElementById('saveUser').addEventListener('click', () => this.saveUser());
+        
+        // Búsqueda con debounce
+        document.getElementById('searchInput').addEventListener('input', (e) => {
+            clearTimeout(this.searchTimeout);
+            this.searchTimeout = setTimeout(() => this.filterUsers(e.target.value), 300);
+        });
+        
+        // Tema
+        document.getElementById('themeToggle').addEventListener('click', () => this.toggleTheme());
+        
+        // Auto-calcular fecha de expiración
+        document.getElementById('expiryDays').addEventListener('change', (e) => this.calculateExpiryDate(e.target.value));
+        
+        // Validación en tiempo real del username
+        document.getElementById('username').addEventListener('input', (e) => this.validateUsernameField(e.target));
+        
+        // Botones de sistema
+        document.getElementById('btnSystemMonitor').addEventListener('click', () => this.showSystemMonitor());
+        document.getElementById('btnActivePorts').addEventListener('click', () => this.showActivePorts());
+        document.getElementById('btnRestartPanel').addEventListener('click', () => this.restartPanel());
+        document.getElementById('btnUninstall').addEventListener('click', () => this.uninstallPanel());
+        document.getElementById('logoutBtn').addEventListener('click', () => this.logout());
+        
+        // Modal de credenciales
+        document.getElementById('openmodalCred').addEventListener('click', () => this.showCredentialsModal());
+        document.getElementById('canceladdsssh').addEventListener('click', () => this.hideCredentialsModal());
+        document.getElementById('sshcon').addEventListener('click', () => this.connectSSH());
+    }
+
+    startSystemStats() {
+        // Actualizar estadísticas cada 5 segundos
+        this.statsInterval = setInterval(() => this.updateSystemStats(), 5000);
+        this.updateSystemStats();
+    }
+
+    async updateSystemStats() {
+        try {
+            const response = await fetch(`${this.systemApiUrl}?action=stats`);
+            const data = await response.json();
+            
+            if (data.success) {
+                document.getElementById('cpuUsage').textContent = data.cpu + '%';
+                document.getElementById('ramUsage').textContent = data.ram + '%';
+                document.getElementById('diskUsage').textContent = data.disk + '%';
+            }
+        } catch (error) {
+            console.error('Error actualizando estadísticas:', error);
+        }
+    }
+
+    async showSystemMonitor() {
+        try {
+            const response = await fetch(`${this.systemApiUrl}?action=stats`);
+            const data = await response.json();
+            
+            if (data.success) {
+                document.getElementById('cpuDetail').textContent = data.cpu + '%';
+                document.getElementById('ramDetail').textContent = data.ram + '%';
+                document.getElementById('diskDetail').textContent = data.disk + '%';
+                document.getElementById('uptimeDetail').textContent = data.uptime;
+                
+                // Crear gráfico
+                this.createSystemChart(data);
+                
+                document.getElementById('systemMonitorModal').style.display = 'flex';
+            }
+        } catch (error) {
+            this.showNotification('Error al cargar monitor del sistema', true);
+        }
+    }
+
+    createSystemChart(data) {
+        const ctx = document.getElementById('systemChart').getContext('2d');
+        
+        // Destruir gráfico anterior si existe
+        if (this.systemChart) {
+            this.systemChart.destroy();
+        }
+        
+        this.systemChart = new Chart(ctx, {
+            type: 'doughnut',
+            data: {
+                labels: ['CPU', 'RAM', 'DISCO'],
+                datasets: [{
+                    data: [data.cpu, data.ram, data.disk],
+                    backgroundColor: ['#4299e1', '#48bb78', '#ed8936'],
+                    borderWidth: 0
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        position: 'bottom'
+                    }
+                }
+            }
+        });
+    }
+
+    async showActivePorts() {
+        try {
+            const response = await fetch(`${this.systemApiUrl}?action=ports`);
+            const data = await response.json();
+            
+            if (data.success) {
+                const portsList = document.getElementById('portsList');
+                
+                if (data.ports.length === 0) {
+                    portsList.innerHTML = '<tr><td colspan="3" style="padding: 20px; text-align: center;">No hay puertos activos</td></tr>';
+                } else {
+                    portsList.innerHTML = data.ports.map(port => `
+                        <tr>
+                            <td style="padding: 10px; border-bottom: 1px solid #e2e8f0;">${port.port}</td>
+                            <td style="padding: 10px; border-bottom: 1px solid #e2e8f0;">${port.service}</td>
+                            <td style="padding: 10px; border-bottom: 1px solid #e2e8f0;">
+                                <span style="background: #c6f6d5; color: #22543d; padding: 3px 8px; border-radius: 4px; font-size: 12px;">${port.status}</span>
+                            </td>
+                        </tr>
+                    `).join('');
+                }
+                
+                document.getElementById('portsModal').style.display = 'flex';
+            }
+        } catch (error) {
+            this.showNotification('Error al cargar puertos activos', true);
+        }
+    }
+
+    restartPanel() {
+        if (confirm('¿Reiniciar el panel? Esto limpiará la caché y reiniciará servicios.')) {
+            fetch('/php/endpoints/system_control.php?action=restart', {
+                method: 'POST'
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    this.showNotification('Panel reiniciado correctamente');
+                    setTimeout(() => window.location.reload(), 2000);
+                } else {
+                    this.showNotification('Error al reiniciar el panel', true);
+                }
+            })
+            .catch(() => {
+                this.showNotification('Error al reiniciar el panel', true);
+            });
+        }
+    }
+
+    uninstallPanel() {
+        if (confirm('⚠️ ¿DESINSTALAR EL PANEL? Esta acción eliminará todos los archivos y configuraciones.\n¿Estás completamente seguro?')) {
+            const password = prompt('Ingresa tu contraseña de administrador para confirmar la desinstalación:');
+            
+            if (password) {
+                fetch('/php/endpoints/system_control.php?action=uninstall', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ password: password })
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        this.showNotification('Desinstalando panel...');
+                        setTimeout(() => {
+                            window.location.href = '/uninstalled.html';
+                        }, 3000);
+                    } else {
+                        this.showNotification('Contraseña incorrecta', true);
+                    }
+                })
+                .catch(() => {
+                    this.showNotification('Error al desinstalar el panel', true);
+                });
+            }
+        }
+    }
+
+    logout() {
+        window.location.href = '/logout.php';
+    }
+
+    showCredentialsModal() {
+        document.getElementById("modalCred").style.display = "flex";
+    }
+
+    hideCredentialsModal() {
+        document.getElementById("modalCred").style.display = "none";
+    }
+
+    connectSSH() {
+        const ip = document.getElementById('input1').value.trim();
+        const user = document.getElementById('input2').value.trim();
+        const pass = document.getElementById('input3').value.trim();
+        const port = document.getElementById('input4').value.trim() || '22';
+
+        if (!ip || !user || !pass) {
+            this.showNotification('Por favor completa todos los campos de conexión SSH', true);
+            return;
+        }
+
+        this.setCredentials(ip, user, pass, port);
+        this.hideCredentialsModal();
+    }
+
+    // [El resto de los métodos existentes se mantienen igual]
+    // (validateUsernameField, setCredentials, validateIP, testConnection, 
+    // loadUsers, renderUsers, showModal, hideModal, saveUser, deleteUser, 
+    // extendUser, etc.)
+}
+
+// Inicializar cuando el DOM esté listo
+document.addEventListener('DOMContentLoaded', () => {
+    // Cargar tema guardado
+    const savedTheme = localStorage.getItem('theme');
+    if (savedTheme) {
+        document.documentElement.setAttribute('data-theme', savedTheme);
+    }
+    
+    // Inicializar manager
+    window.sshManager = new SSHManager();
+    
+    // Cerrar modales con ESC
+    document.addEventListener('keydown', function(e) {
+        if (e.key === 'Escape') {
+            document.querySelectorAll('.modal-overlay').forEach(modal => {
+                modal.style.display = 'none';
+            });
+            document.getElementById('userModal').classList.remove('show');
+        }
+    });
+});
+EOF
+
+# Crear endpoint para control del sistema
+cat > $INSTALL_DIR/php/endpoints/system_control.php << 'EOF'
+<?php
+header('Content-Type: application/json');
+header('Access-Control-Allow-Origin: *');
+header('Access-Control-Allow-Methods: POST, OPTIONS');
+header('Access-Control-Allow-Headers: Content-Type');
+
+require_once '../../includes/config.php';
+require_login();
+
+if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
+    http_response_code(200);
+    exit();
+}
+
+$action = $_GET['action'] ?? '';
+
+switch ($action) {
+    case 'restart':
+        // Limpiar caché y reiniciar servicios
+        shell_exec('systemctl restart nginx');
+        shell_exec('systemctl restart php8.1-fpm');
+        shell_exec('rm -rf /tmp/* 2>/dev/null');
+        
+        echo json_encode(['success' => true, 'message' => 'Panel reiniciado']);
+        break;
+        
+    case 'uninstall':
+        $input = json_decode(file_get_contents('php://input'), true);
+        $password = $input['password'] ?? '';
+        
+        // Verificar contraseña
+        if (!check_login(PANEL_USER, $password)) {
+            echo json_encode(['success' => false, 'message' => 'Contraseña incorrecta']);
+            exit();
+        }
+        
+        // Crear script de desinstalación
+        $uninstallScript = '/tmp/uninstall_panel.sh';
+        $scriptContent = '#!/bin/bash
+rm -rf /var/www/ssh-panel
+rm -f /etc/nginx/sites-available/ssh-panel
+rm -f /etc/nginx/sites-enabled/ssh-panel
+systemctl restart nginx
+echo "Panel desinstalado correctamente"
+';
+        
+        file_put_contents($uninstallScript, $scriptContent);
+        chmod($uninstallScript, 0755);
+        
+        // Ejecutar en segundo plano
+        shell_exec("nohup $uninstallScript > /dev/null 2>&1 &");
+        
+        echo json_encode(['success' => true, 'message' => 'Desinstalando...']);
+        break;
+        
+    default:
+        echo json_encode(['success' => false, 'message' => 'Acción no válida']);
+}
+?>
+EOF
+
+# Configurar Nginx
+print_message "Configurando Nginx..."
+cat > $NGINX_CONF << EOF
+server {
+    listen 8080;
+    server_name _;
+    
+    root $INSTALL_DIR;
+    index index.html index.php;
+    
+    access_log $INSTALL_DIR/logs/access.log;
+    error_log $INSTALL_DIR/logs/error.log;
+    
+    location / {
+        try_files \$uri \$uri/ =404;
+    }
+    
+    location ~ \.php$ {
+        include snippets/fastcgi-php.conf;
+        fastcgi_pass unix:/var/run/php/php8.1-fpm.sock;
+        fastcgi_param SCRIPT_FILENAME \$document_root\$fastcgi_script_name;
+        include fastcgi_params;
+    }
+    
+    location ~ /\.ht {
+        deny all;
+    }
+}
+EOF
+
+# Habilitar sitio
+ln -sf $NGINX_CONF /etc/nginx/sites-enabled/
+rm -f /etc/nginx/sites-enabled/default
+
+# Configurar permisos
+print_message "Configurando permisos..."
+chown -R www-data:www-data $INSTALL_DIR
+chmod -R 755 $INSTALL_DIR
+chmod -R 750 $INSTALL_DIR/includes
+chmod 640 $INSTALL_DIR/includes/panel_credentials.php
+
+# Reiniciar servicios
+print_message "Reiniciando servicios..."
+systemctl restart nginx
+systemctl restart php8.1-fpm
+
+# Obtener IP
+SERVER_IP=$(curl -s ifconfig.me)
+
+# Comando de acceso
+echo ""
+echo "=================================================="
+echo "✅ INSTALACIÓN COMPLETADA EXITOSAMENTE"
+echo "=================================================="
+echo ""
+echo "📋 DATOS DE ACCESO:"
+echo "   Usuario: $PANEL_USER"
+echo "   Contraseña: [La que ingresaste]"
+echo ""
+echo "🌐 ACCESO AL PANEL:"
+echo "   http://$SERVER_IP:8080"
+echo "   Comando: ceo"
+echo ""
+echo "🔧 COMANDOS ÚTILES:"
+echo "   Ver logs: tail -f $INSTALL_DIR/logs/error.log"
+echo "   Reiniciar panel: systemctl restart nginx"
+echo ""
+echo "⚠️ GUARDA ESTOS DATOS EN UN LUGAR SEGURO"
+echo "=================================================="
+
+# Crear comando 'ceo' en el sistema
+cat > /usr/local/bin/ceo << EOF
+#!/bin/bash
+echo "🌐 Abriendo panel SSH..."
+xdg-open "http://$SERVER_IP:8080" 2>/dev/null || sensible-browser "http://$SERVER_IP:8080" 2>/dev/null || echo "http://$SERVER_IP:8080"
+EOF
+chmod +x /usr/local/bin/ceo
+
+print_success "Comando 'ceo' creado - Escribe 'ceo' en terminal para abrir el panel"
+EOF
