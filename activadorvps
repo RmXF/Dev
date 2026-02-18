@@ -1,0 +1,91 @@
+#!/bin/bash
+
+clear
+
+# Colores
+GREEN="\e[32m"
+RED="\e[31m"
+YELLOW="\e[33m"
+NC="\e[0m"
+
+WEB_ROOT="/var/www/html"
+
+install_stack() {
+    echo -e "${YELLOW}Actualizando sistema...${NC}"
+    apt update -y && apt upgrade -y
+
+    echo -e "${YELLOW}Instalando Nginx, PHP y MariaDB...${NC}"
+    apt install nginx mariadb-server php php-fpm php-mysql unzip curl ufw -y
+
+    systemctl enable nginx
+    systemctl enable mariadb
+    systemctl start nginx
+    systemctl start mariadb
+
+    echo -e "${YELLOW}Configurando Firewall...${NC}"
+    ufw allow OpenSSH
+    ufw allow 80
+    ufw allow 443
+    ufw --force enable
+
+    chown -R www-data:www-data $WEB_ROOT
+    chmod -R 755 $WEB_ROOT
+
+    echo -e "${GREEN}Servidor web instalado correctamente.${NC}"
+}
+
+create_database() {
+
+    echo -e "${YELLOW}Crear Base de Datos${NC}"
+
+    read -p "Nombre de la base de datos: " DB_NAME
+    read -p "Usuario para la base de datos: " DB_USER
+    read -s -p "Contraseña para el usuario: " DB_PASS
+    echo ""
+
+    mysql -u root <<EOF
+CREATE DATABASE $DB_NAME;
+CREATE USER '$DB_USER'@'localhost' IDENTIFIED BY '$DB_PASS';
+GRANT ALL PRIVILEGES ON $DB_NAME.* TO '$DB_USER'@'localhost';
+FLUSH PRIVILEGES;
+EOF
+
+    if [ $? -eq 0 ]; then
+        echo -e "${GREEN}Base de datos creada correctamente.${NC}"
+        echo -e "${GREEN}Credenciales:${NC}"
+        echo "Base de datos: $DB_NAME"
+        echo "Usuario: $DB_USER"
+        echo "Contraseña: $DB_PASS"
+    else
+        echo -e "${RED}Error creando la base de datos.${NC}"
+    fi
+}
+
+show_menu() {
+    while true; do
+        echo ""
+        echo "========== VPS WEB MANAGER =========="
+        echo "1) Instalar Servidor Web Completo"
+        echo "2) Crear Base de Datos"
+        echo "3) Salir"
+        echo "====================================="
+        read -p "Selecciona una opción: " OPTION
+
+        case $OPTION in
+            1)
+                install_stack
+                ;;
+            2)
+                create_database
+                ;;
+            3)
+                exit 0
+                ;;
+            *)
+                echo -e "${RED}Opción inválida.${NC}"
+                ;;
+        esac
+    done
+}
+
+show_menu
