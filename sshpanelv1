@@ -1,23 +1,23 @@
 #!/usr/bin/env bash
 set -e
 
-# ↓ Link RAW directo al ZIP
+# ========= CONFIGURACIÓN =========
 PANEL_URL="https://github.com/RmXF/Dev/raw/main/panelssh.zip"
 PANEL_DIR="/var/www/sshpanel"
-echo "Creando tablas..."
-mysql -u root $DB_NAME < $PANEL_DIR/install.sql
-
-echo "Configurando credenciales en config.php..."
-sed -i "s/password_aqui/$DB_PASS/g" $PANEL_DIR/config.php
-
 DB_NAME="ssh_panel"
 DB_USER="paneluser"
 DB_PASS=$(openssl rand -hex 12)
+# =================================
 
 echo "====================================="
-echo "        INSTALADOR SSH PANEL v1"
+echo "        INSTALADOR SSH PANEL VII"
 echo "====================================="
 echo
+
+if [ "$(id -u)" -ne 0 ]; then
+  echo "Ejecuta este script como root."
+  exit 1
+fi
 
 read -p "Ingrese contraseña para admin: " ADMIN_PASS
 echo
@@ -44,20 +44,47 @@ GRANT ALL PRIVILEGES ON $DB_NAME.* TO '$DB_USER'@'localhost';
 FLUSH PRIVILEGES;
 MYSQL_SCRIPT
 
-echo "Descargando panel..."
-rm -rf $PANEL_DIR
-mkdir -p $PANEL_DIR
+echo "Preparando directorio..."
+rm -rf "$PANEL_DIR"
+mkdir -p "$PANEL_DIR"
 
+echo "Descargando panel..."
 curl -L "$PANEL_URL" -o /tmp/panel.zip
-unzip /tmp/panel.zip -d $PANEL_DIR
+
+echo "Extrayendo archivos..."
+rm -rf /tmp/panel_extract
+mkdir -p /tmp/panel_extract
+unzip -q /tmp/panel.zip -d /tmp/panel_extract
+
+# Detectar si existe carpeta interna
+INNER_DIR=$(find /tmp/panel_extract -mindepth 1 -maxdepth 1 -type d | head -n 1)
+
+if [ -n "$INNER_DIR" ]; then
+    echo "Detectada carpeta interna en el ZIP. Ajustando estructura..."
+    mv "$INNER_DIR"/* "$PANEL_DIR"/
+else
+    mv /tmp/panel_extract/* "$PANEL_DIR"/
+fi
+
+rm -rf /tmp/panel_extract
+rm -f /tmp/panel.zip
+
+# Verificar que install.sql exista
+if [ ! -f "$PANEL_DIR/install.sql" ]; then
+  echo "ERROR: install.sql no encontrado en el panel."
+  exit 1
+fi
+
+echo "Creando tablas..."
+mysql -u root "$DB_NAME" < "$PANEL_DIR/install.sql"
 
 echo "Configurando credenciales en config.php..."
+sed -i "s/password_aqui/$DB_PASS/g" "$PANEL_DIR/config.php"
 
-sed -i "s/password_aqui/$DB_PASS/g" $PANEL_DIR/config.php
-
+echo "Creando usuario admin..."
 HASHED_PASS=$(php -r "echo password_hash('$ADMIN_PASS', PASSWORD_DEFAULT);")
 
-mysql -u root $DB_NAME <<MYSQL_ADMIN
+mysql -u root "$DB_NAME" <<MYSQL_ADMIN
 INSERT INTO admins (username, password)
 VALUES ('admin', '$HASHED_PASS');
 MYSQL_ADMIN
@@ -67,6 +94,8 @@ chown -R www-data:www-data "$PANEL_DIR"
 chmod -R 755 "$PANEL_DIR"
 
 echo "Configurando Nginx..."
+
+PHP_VERSION=$(php -r 'echo PHP_MAJOR_VERSION.".".PHP_MINOR_VERSION;')
 
 cat > /etc/nginx/sites-available/sshpanel <<NGINX
 server {
@@ -81,7 +110,7 @@ server {
 
     location ~ \.php\$ {
         include snippets/fastcgi-php.conf;
-        fastcgi_pass unix:/var/run/php/php$(php -r 'echo PHP_MAJOR_VERSION.".".PHP_MINOR_VERSION;')-fpm.sock;
+        fastcgi_pass unix:/var/run/php/php${PHP_VERSION}-fpm.sock;
     }
 
     location ~ /\.ht {
@@ -95,16 +124,17 @@ rm -f /etc/nginx/sites-enabled/default
 
 nginx -t
 systemctl restart nginx
-systemctl restart php*-fpm
+systemctl restart php${PHP_VERSION}-fpm
 
 IP=$(hostname -I | awk '{print $1}')
 
 echo
 echo "====================================="
-echo " INSTALACIÓN COMPLETADA"
+echo "        INSTALACIÓN COMPLETADA"
 echo "====================================="
 echo "URL: http://$IP/"
 echo "Usuario: admin"
 echo "Contraseña: $ADMIN_PASS"
 echo
 echo "Guarda estas credenciales."
+echo "====================================="
