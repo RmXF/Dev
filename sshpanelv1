@@ -2,7 +2,7 @@
 set -e
 
 # ========= CONFIGURACIÓN =========
-PANEL_URL="https://raw.githubusercontent.com/RmXF/Dev/main/panelssh.zip"
+PANEL_URL="https://raw.githubusercontent.com/RmXF/Dev/main/panelsshv2.zip"
 PANEL_DIR="/var/www/sshpanel"
 DB_NAME="ssh_panel"
 DB_USER="paneluser"
@@ -10,7 +10,7 @@ DB_PASS=$(openssl rand -hex 12)
 # =================================
 
 echo "====================================="
-echo "        INSTALADOR SSH PANEL VI"
+echo "        INSTALADOR SSH PANEL VII"
 echo "====================================="
 echo
 
