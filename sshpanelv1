@@ -2,7 +2,7 @@
 set -e
 
 # ========= CONFIGURACIÓN =========
-PANEL_URL="https://github.com/RmXF/Dev/raw/main/panelssh.zip"
+PANEL_URL="https://raw.githubusercontent.com/RmXF/Dev/main/panelssh.zip"
 PANEL_DIR="/var/www/sshpanel"
 DB_NAME="ssh_panel"
 DB_USER="paneluser"
@@ -10,10 +10,11 @@ DB_PASS=$(openssl rand -hex 12)
 # =================================
 
 echo "====================================="
-echo "        INSTALADOR SSH PANEL VII"
+echo "        INSTALADOR SSH PANEL"
 echo "====================================="
 echo
 
+# Verificar root
 if [ "$(id -u)" -ne 0 ]; then
   echo "Ejecuta este script como root."
   exit 1
@@ -51,16 +52,23 @@ mkdir -p "$PANEL_DIR"
 echo "Descargando panel..."
 curl -L "$PANEL_URL" -o /tmp/panel.zip
 
+# Verificar que realmente sea ZIP
+if ! file /tmp/panel.zip | grep -q "Zip archive"; then
+  echo "ERROR: El archivo descargado no es un ZIP válido."
+  echo "Verifica que el enlace RAW sea correcto."
+  exit 1
+fi
+
 echo "Extrayendo archivos..."
 rm -rf /tmp/panel_extract
 mkdir -p /tmp/panel_extract
 unzip -q /tmp/panel.zip -d /tmp/panel_extract
 
-# Detectar si existe carpeta interna
+# Detectar carpeta interna
 INNER_DIR=$(find /tmp/panel_extract -mindepth 1 -maxdepth 1 -type d | head -n 1)
 
 if [ -n "$INNER_DIR" ]; then
-    echo "Detectada carpeta interna en el ZIP. Ajustando estructura..."
+    echo "Detectada carpeta interna. Ajustando estructura..."
     mv "$INNER_DIR"/* "$PANEL_DIR"/
 else
     mv /tmp/panel_extract/* "$PANEL_DIR"/
@@ -69,7 +77,7 @@ fi
 rm -rf /tmp/panel_extract
 rm -f /tmp/panel.zip
 
-# Verificar que install.sql exista
+# Verificar install.sql
 if [ ! -f "$PANEL_DIR/install.sql" ]; then
   echo "ERROR: install.sql no encontrado en el panel."
   exit 1
@@ -135,6 +143,6 @@ echo "====================================="
 echo "URL: http://$IP/"
 echo "Usuario: admin"
 echo "Contraseña: $ADMIN_PASS"
+echo "====================================="
 echo
 echo "Guarda estas credenciales."
-echo "====================================="
