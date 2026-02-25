@@ -6,7 +6,7 @@ echo "     INSTALADOR PRO SSH PANEL"
 echo "====================================="
 
 PANEL_DIR="/var/www/sshpanel"
-ZIP_URL="PON_AQUI_TU_LINK_RAW_DEL_ZIP"
+ZIP_URL="https://raw.githubusercontent.com/RmXF/Dev/main/panelssh_pro.zip"
 
 # -------------------------
 # Instalar dependencias
