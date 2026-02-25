@@ -4,12 +4,18 @@ set -e
 # ↓ Link RAW directo al ZIP
 PANEL_URL="https://github.com/RmXF/Dev/raw/main/panelssh.zip"
 PANEL_DIR="/var/www/sshpanel"
+echo "Creando tablas..."
+mysql -u root $DB_NAME < $PANEL_DIR/install.sql
+
+echo "Configurando credenciales en config.php..."
+sed -i "s/password_aqui/$DB_PASS/g" $PANEL_DIR/config.php
+
 DB_NAME="ssh_panel"
 DB_USER="paneluser"
 DB_PASS=$(openssl rand -hex 12)
 
 echo "====================================="
-echo "        INSTALADOR SSH PANEL"
+echo "        INSTALADOR SSH PANEL v1"
 echo "====================================="
 echo
 
