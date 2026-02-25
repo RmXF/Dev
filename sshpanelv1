@@ -10,7 +10,7 @@ DB_PASS=$(openssl rand -hex 12)
 # =================================
 
 echo "====================================="
-echo "        INSTALADOR SSH PANEL"
+echo "        INSTALADOR SSH PANEL VI"
 echo "====================================="
 echo
 
