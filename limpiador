@@ -1,0 +1,91 @@
+#!/bin/bash
+
+clear
+
+GREEN="\e[32m"
+RED="\e[31m"
+YELLOW="\e[33m"
+NC="\e[0m"
+
+echo -e "${RED}"
+echo "======================================="
+echo "     CEO MANGER - CLEAN RESET TOOL"
+echo "======================================="
+echo -e "${NC}"
+
+read -p "Este proceso eliminará servicios web y limpiará el sistema. ¿Continuar? (y/n): " CONFIRM
+
+if [ "$CONFIRM" != "y" ]; then
+    echo "Cancelado."
+    exit 1
+fi
+
+# ==========================
+# Verificar ROOT
+# ==========================
+if [ "$EUID" -ne 0 ]; then
+  echo -e "${RED}Debe ejecutar como root.${NC}"
+  exit 1
+fi
+
+echo -e "${YELLOW}Cerrando todos los puertos excepto SSH...${NC}"
+
+# Reset UFW si existe
+ufw --force reset 2>/dev/null
+ufw default deny incoming
+ufw default allow outgoing
+ufw allow 22
+ufw --force enable
+
+echo -e "${GREEN}Firewall configurado ✔${NC}"
+
+# ==========================
+# Eliminar servicios comunes
+# ==========================
+
+echo -e "${YELLOW}Eliminando Apache, Nginx, MySQL, Node...${NC}"
+
+apt purge apache2* nginx* mysql* mariadb* nodejs npm -y
+apt autoremove -y
+apt autoclean -y
+
+# ==========================
+# Limpiar cache
+# ==========================
+
+echo -e "${YELLOW}Limpiando cache del sistema...${NC}"
+apt clean
+rm -rf /tmp/*
+rm -rf /var/tmp/*
+
+# ==========================
+# Limpiar logs
+# ==========================
+
+echo -e "${YELLOW}Limpiando logs...${NC}"
+rm -rf /var/log/*.log
+journalctl --rotate
+journalctl --vacuum-time=1s
+
+# ==========================
+# Limpiar historial bash
+# ==========================
+
+echo -e "${YELLOW}Limpiando historial...${NC}"
+history -c
+cat /dev/null > ~/.bash_history
+
+# ==========================
+# Reiniciar SSH
+# ==========================
+
+systemctl restart ssh
+
+echo -e "${GREEN}"
+echo "======================================="
+echo "    LIMPIEZA COMPLETADA"
+echo "======================================="
+echo -e "${NC}"
+
+echo "Solo puerto 22 (SSH) permanece abierto."
+echo "Sistema limpio y estable."
