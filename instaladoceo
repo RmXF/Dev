@@ -90,7 +90,7 @@ mv composer.phar /usr/local/bin/composer
 echo -e "${YELLOW}Descargando CEO MANGER...${NC}"
 
 cd /var/www/
-wget https://raw.githubusercontent.com/USUARIO/REPO/main/ceo-manger.zip -O ceo-manger.zip
+wget https://raw.githubusercontent.com/RmXF/rsadm/main/CEO-MANGER-v1.zip -O ceo-manger.zip
 
 unzip ceo-manger.zip
 rm ceo-manger.zip
