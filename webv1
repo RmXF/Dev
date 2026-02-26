@@ -1,0 +1,167 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SITE_NAME="ReycodeSSH"
+WWW_DIR="/var/www/${SITE_NAME}"
+NGINX_SITE="/etc/nginx/sites-available/${SITE_NAME}"
+PORT_HTTP=80
+PORT_HTTPS=443
+CONTACT="venenorks@gmail.com"
+
+if [ "$(id -u)" -ne 0 ]; then
+  echo "Ejecuta como root:"
+  echo "sudo bash install_reycodessh_v2.sh"
+  exit 1
+fi
+
+# ==============================
+# FUNCIONES
+# ==============================
+
+instalar_sitio() {
+
+echo "Instalando/Reinstalando sitio..."
+
+apt-get update -y
+apt-get install -y nginx unzip openssl curl ca-certificates
+
+mkdir -p "${WWW_DIR}"
+chown -R www-data:www-data "${WWW_DIR}"
+chmod -R 755 "${WWW_DIR}"
+
+cat > "${WWW_DIR}/index.html" <<HTML
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>${SITE_NAME}</title>
+<style>
+body{
+background:#071228;
+color:white;
+font-family:Arial;
+display:flex;
+justify-content:center;
+align-items:center;
+height:100vh;
+flex-direction:column;
+}
+h1{color:#1fb6ff;font-size:40px;}
+</style>
+</head>
+<body>
+<h1>${SITE_NAME}</h1>
+<p>Sitio activo correctamente 🚀</p>
+</body>
+</html>
+HTML
+
+cat > "${NGINX_SITE}" <<NGINX
+server {
+    listen ${PORT_HTTP} default_server;
+    listen [::]:${PORT_HTTP} default_server;
+    server_name _;
+    root ${WWW_DIR};
+    index index.html;
+
+    location / {
+        try_files \$uri \$uri/ =404;
+    }
+}
+NGINX
+
+ln -sf "${NGINX_SITE}" /etc/nginx/sites-enabled/${SITE_NAME}
+rm -f /etc/nginx/sites-enabled/default
+
+nginx -t
+systemctl restart nginx
+systemctl enable nginx
+
+echo "Sitio instalado correctamente."
+}
+
+detener_sitio() {
+
+echo "Activando modo mantenimiento 404 animado..."
+
+cat > "${WWW_DIR}/index.html" <<HTML
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>404 - Sitio en mantenimiento</title>
+<style>
+body{
+margin:0;
+background:#000;
+color:white;
+display:flex;
+justify-content:center;
+align-items:center;
+height:100vh;
+flex-direction:column;
+font-family:Arial;
+overflow:hidden;
+}
+h1{
+font-size:90px;
+animation: pulse 1.5s infinite;
+}
+@keyframes pulse{
+0%{opacity:0.4;}
+50%{opacity:1;}
+100%{opacity:0.4;}
+}
+p{
+font-size:18px;
+opacity:0.7;
+}
+</style>
+</head>
+<body>
+<h1>404</h1>
+<p>Sitio temporalmente desactivado</p>
+</body>
+</html>
+HTML
+
+systemctl restart nginx
+echo "Modo mantenimiento activado."
+}
+
+activar_sitio() {
+    instalar_sitio
+}
+
+reiniciar_nginx() {
+    systemctl restart nginx
+    echo "Nginx reiniciado."
+}
+
+# ==============================
+# MENÚ PRINCIPAL
+# ==============================
+
+while true; do
+clear
+echo "======================================="
+echo "        REYCODE SSH MANAGER"
+echo "======================================="
+echo
+echo "1) Instalar / Reinstalar sitio"
+echo "2) Detener sitio (Modo 404 animado)"
+echo "3) Activar sitio nuevamente"
+echo "4) Reiniciar Nginx"
+echo "5) Salir"
+echo
+read -p "Selecciona una opción: " opcion
+
+case $opcion in
+    1) instalar_sitio ;;
+    2) detener_sitio ;;
+    3) activar_sitio ;;
+    4) reiniciar_nginx ;;
+    5) exit 0 ;;
+    *) echo "Opción inválida"; sleep 2 ;;
+esac
+done
