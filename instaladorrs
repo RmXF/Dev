@@ -15,7 +15,7 @@ CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 
 # Configuración
-GITHUB_ZIP_URL="https://github.com/tuusuario/turepositorio/raw/main/vortex-website.zip"
+GITHUB_ZIP_URL="https://github.com/RmXF/Dev/raw/main/webofficial.zip"
 INSTALL_DIR="/var/www/vortex"
 NGINX_CONF="/etc/nginx/sites-available/vortex"
 APACHE_CONF="/etc/apache2/sites-available/vortex.conf"
