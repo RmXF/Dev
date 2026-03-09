@@ -1,0 +1,202 @@
+#!/bin/bash
+
+clear
+
+# Colores
+verde='\033[1;32m'
+rojo='\033[1;31m'
+azul='\033[1;34m'
+reset='\033[0m'
+
+# Instalar dependencias
+instalar_dependencias() {
+
+echo -e "${azul}Instalando dependencias...${reset}"
+
+apt update -y
+apt install nginx unzip wget curl -y
+
+systemctl enable nginx
+systemctl start nginx
+
+echo -e "${verde}Dependencias instaladas correctamente${reset}"
+
+}
+
+# Instalar sitio web
+instalar_web() {
+
+echo ""
+read -p "Coloca el link del ZIP del sitio web: " link
+
+cd /var/www/html
+
+echo "Limpiando sitio anterior..."
+rm -rf *
+
+echo "Descargando sitio..."
+wget $link -O sitio.zip
+
+echo "Descomprimiendo..."
+unzip sitio.zip
+
+rm sitio.zip
+
+systemctl restart nginx
+
+echo ""
+echo -e "${verde}Sitio instalado correctamente${reset}"
+
+}
+
+# Actualizar sitio web
+actualizar_web() {
+
+echo ""
+read -p "Coloca el nuevo link del ZIP: " link
+
+cd /var/www/html
+
+rm -rf *
+
+wget $link -O sitio.zip
+
+unzip sitio.zip
+
+rm sitio.zip
+
+systemctl restart nginx
+
+echo -e "${verde}Sitio actualizado correctamente${reset}"
+
+}
+
+# Modo mantenimiento
+modo_mantenimiento() {
+
+cat <<EOF > /var/www/html/index.html
+<html>
+<head>
+<title>Mantenimiento</title>
+<style>
+body{
+font-family:Arial;
+background:#111;
+color:white;
+text-align:center;
+padding-top:100px;
+}
+h1{
+font-size:50px;
+color:#00ffcc;
+}
+</style>
+</head>
+
+<body>
+
+<h1>Sitio en mantenimiento</h1>
+
+<p>Estamos realizando mejoras en el servidor</p>
+
+</body>
+</html>
+EOF
+
+systemctl restart nginx
+
+echo -e "${rojo}Modo mantenimiento activado${reset}"
+
+}
+
+# Reiniciar nginx
+reiniciar_nginx() {
+
+systemctl restart nginx
+
+echo -e "${verde}NGINX reiniciado correctamente${reset}"
+
+}
+
+# Mostrar IP
+mostrar_ip() {
+
+echo ""
+echo "IP del servidor:"
+curl -s ifconfig.me
+echo ""
+
+}
+
+# Menú
+menu() {
+
+while true; do
+
+clear
+
+echo -e "${azul}"
+echo "================================"
+echo "        WEB MANAGER VPS"
+echo "================================"
+echo -e "${reset}"
+
+echo "1 - Instalar dependencias"
+echo "2 - Instalar sitio web"
+echo "3 - Actualizar sitio"
+echo "4 - Activar mantenimiento"
+echo "5 - Reiniciar NGINX"
+echo "6 - Mostrar IP servidor"
+echo "0 - Salir"
+echo ""
+
+read -p "Selecciona una opción: " opc
+
+case $opc in
+
+1)
+instalar_dependencias
+read -p "Presiona ENTER para continuar..."
+;;
+
+2)
+instalar_web
+read -p "Presiona ENTER para continuar..."
+;;
+
+3)
+actualizar_web
+read -p "Presiona ENTER para continuar..."
+;;
+
+4)
+modo_mantenimiento
+read -p "Presiona ENTER para continuar..."
+;;
+
+5)
+reiniciar_nginx
+read -p "Presiona ENTER para continuar..."
+;;
+
+6)
+mostrar_ip
+read -p "Presiona ENTER para continuar..."
+;;
+
+0)
+exit
+;;
+
+*)
+echo "Opción inválida"
+sleep 2
+;;
+
+esac
+
+done
+
+}
+
+menu
