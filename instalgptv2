@@ -27,7 +27,7 @@ echo -e "${verde}Dependencias instaladas correctamente${reset}"
 instalar_web() {
 
 echo ""
-read -p "Coloca el link del ZIP del sitio web: " link
+read -p "https://raw.githubusercontent.com/RmXF/Dev/main/gptv2.zip" link
 
 cd /var/www/html
 
