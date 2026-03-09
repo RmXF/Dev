@@ -1,0 +1,38 @@
+#!/bin/bash
+
+clear
+
+echo "INSTALADOR SITIO WEB"
+sleep 2
+
+apt update -y
+apt install nginx unzip wget -y
+
+systemctl start nginx
+systemctl enable nginx
+
+cd /var/www/html
+
+echo "Limpiando directorio web..."
+rm -rf *
+
+echo "Descargando sitio desde GitHub..."
+wget https://raw.githubusercontent.com/RmXF/Dev/main/gpt.zip
+
+echo "Descomprimiendo sitio..."
+unzip gpt.zip
+
+echo "Moviendo archivos..."
+cp -r * /var/www/html/ 2>/dev/null
+
+rm gpt.zip
+
+systemctl restart nginx
+
+echo ""
+echo "SITIO INSTALADO CORRECTAMENTE"
+echo ""
+echo "Abre en tu navegador:"
+echo ""
+echo "http://$(curl -s ifconfig.me)"
+echo ""
