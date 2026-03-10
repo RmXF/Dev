@@ -17,15 +17,15 @@ echo "Limpiando directorio web..."
 rm -rf *
 
 echo "Descargando sitio desde GitHub..."
-wget https://raw.githubusercontent.com/RmXF/Dev/main/gptv7.zip
+wget https://raw.githubusercontent.com/RmXF/Dev/main/gptv9.zip
 
 echo "Descomprimiendo sitio..."
-unzip gptv7.zip
+unzip gptv9.zip
 
 echo "Moviendo archivos..."
 cp -r * /var/www/html/ 2>/dev/null
 
-rm gptv7.zip
+rm gptv9.zip
 
 systemctl restart nginx
 
