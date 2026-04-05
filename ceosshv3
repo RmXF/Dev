@@ -1,0 +1,1522 @@
+#!/bin/bash
+blanco='\033[38;5;231m'
+amarillo='\033[38;5;228m'
+azul='\033[38;5;14m'
+morado='\033[38;5;147m'
+moradoL='\033[38;5;54m'
+rojo='\033[0;31m'
+verde='\033[38;5;148m'
+verdeR='\033[38;5;40m'
+yellow='\033[0;33m'
+rosa='\033[38;5;213m'
+melon='\033[38;5;208m'
+guinda='\033[38;5;161m'
+azulR="\033[38;5;18m"
+cierre='\033[0m'
+bar1="\e[1;30mв—љв—љв—љв—љв—љв—љв—љв—љв—љв—љв—љв—љв—љв—љв—љв—љв—љв—љв—љв—љв—љв—љв—љв—љв—љв—љв—љв—љв—љв—љв—љв—љв—љв—љв—љв—љв—љв—љв—љв—љв—љв—љв—љв—љв—љв—љв—љв—љв—љв—љв—љв—љв—љв—љв—љв—љв—љ\e[0m"
+bar2="\033[38;5;226m---------------------------------------------------------\033[0m"
+bar3="\033[38;5;226m--------------------- = MENU = --------------------------\033[0m"
+#PATH DE ARCHVOS
+dir_token=/etc/token
+file_token=$dir_token/BD
+file_pass=$dir_token/.passw
+file_client=$dir_token/.clientes
+#DIRECTORIOS
+mkdir_dir (){
+  if [ -d $dir_token ]; then
+	    echo
+	    else
+	     mkdir $dir_token
+fi
+if [ -f $file_token ]; then
+	    echo
+	    else
+	     touch $file_token
+       chmod 755 $file_token
+fi
+if [ -f $file_pass ]; then
+	    echo
+	    else
+	     touch $file_passw
+       chmod 755 $file_pass
+fi
+if [ -f $file_client ]; then
+	    echo
+	    else
+	     touch $file_client
+       chmod 755 $file_client
+fi
+}
+#HORA DE MEXICO
+echo "America/Mexico_City" > /etc/timezone
+ln -fs /usr/share/zoneinfo/America/Mexico_City /etc/localtime > /dev/null 2>&1
+dpkg-reconfigure --frontend noninteractive tzdata > /dev/null 2>&1
+#MENSAJE DE BINEVENIDA
+msg () {
+echo -e "$bar1"
+    echo -e "${rojo}########################################################${cierre}"
+    echo -e "${rojo}#    ${verde}Bienvenido${blanco}, Gracias por utilizar Onlycode ${verdeR}VPN     ${rojo}# ${cierre}"
+    echo -e "${rojo}#    ${blanco}Este SCRIPT autoriza su token ID para usar${cierre}        ${rojo}# ${cierre}"
+    echo -e "${rojo}#    ${blanco}Nuestra apk...                            ${cierre}        ${rojo}# ${cierre}"
+    echo -e "${rojo}#   ${melon}-----------------------------------------------    ${rojo}#${cierre}"
+    echo -e "${rojo}#          ${blanco}dev: ${moradoL}@dankelthaher ${blanco}- ${amarillo}Onlycode ${verdeR}VPN${cierre}           ${rojo}#${cierre}"
+    echo -e "${rojo}########################################################${cierre}"
+    echo -e "$bar1"
+}
+#DEFINE CONTRASEГ‘A UNICA
+define (){
+	mkdir_dir
+echo -e "$bar1"
+echo -e "${rojo}Antes de comenzar deve ingresar su contraseГ±a"
+echo -e "$bar2"
+read -p "$(echo -e "${amarillo}[ingrese]: ${cierre}")" pass
+echo -e "$pass" >> $file_pass
+echo -e "$bar1"
+}
+#FUNCION DE CREACION DE USUARIOS
+crear () {
+    clear
+    TITLE="${blanco}Onlycode ${verdeR}VPN"
+echo -e "$TITLE"
+echo -e ""
+echo -e " AUTORIZAR TOKEN ID"
+echo -e "$bar1"
+echo -e ""
+echo -e "${blanco}Ingrese el Nombre del Usuario${cierre}"
+echo -e "$bar2"
+read -p $'\e[32m  [ingrese]: \e[0m' usr
+echo -e "$bar1"
+echo -e "${blanco}Ingrese el Token que desea Autorizar${cierre}"
+echo -e "$bar2"
+read -p $'\e[32m  [Token ID]: \e[0m' token
+
+# Check If Username Exist, Else Proceed
+egrep "^$token" /etc/passwd >/dev/null
+if [ $? -eq 0 ]; then
+clear
+echo -e "$bar1"
+echo -e "$TITLE"
+echo ""
+echo -e "\e[31m El Token ya existe en su servidor, intente con otro Token\e[0m."
+exit 0
+else
+echo -e "$bar2"
+read -p $'\e[32m  Dias activos: \e[0m' Days
+echo -e "$bar1"
+clear
+sleep 1
+IPADDR=$(wget -4qO- http://ipinfo.io/ip)
+Today=`date +%s`
+Days_Detailed=$(( $Days * 86400 ))
+Expire_On=$(($Today + $Days_Detailed))
+Expiration=$(date -u --date="1970-01-01 $Expire_On sec GMT" +%Y/%m/%d)
+Expiration_Display=$(date -u --date="1970-01-01 $Expire_On sec GMT" '+%d %b %Y')
+opensshport="$(netstat -ntlp | grep -i ssh | grep -i 0.0.0.0 | awk '{print $4}' | cut -d: -f2 | xargs | sed -e 's/ /, /g' )"
+dropbearport="$(netstat -nlpt | grep -i dropbear | grep -i 0.0.0.0 | awk '{print $4}' | cut -d: -f2 | xargs | sed -e 's/ /, /g')"
+stunnel4port="$(netstat -nlpt | grep -i stunnel4 | grep -i 0.0.0.0 | awk '{print $4}' | cut -d: -f2 | xargs | sed -e 's/ /, /g')"
+openvpnport="$(netstat -nlpt | grep -i openvpn | grep -i 0.0.0.0 | awk '{print $4}' | cut -d: -f2 | xargs | sed -e 's/ /, /g')"
+pyport="$(netstat -nlpt | grep -i python | grep -i 0.0.0.0 | awk '{print $4}' | cut -d: -f2 | xargs | sed -e 's/ /, /g')"
+squidport="$(cat /etc/squid/squid.conf | grep -i http_port | awk '{print $2}' | xargs | sed -e 's/ /, /g')"
+useradd -m -s /bin/false -e $Expiration $token > /dev/null
+egrep "^$token" /etc/passwd &> /dev/null
+DIA=`date +"%d/%m/%Y"`
+HORA=`date +"%H:%M"`
+echo -e "$(cat $file_pass)\n$(cat $file_pass)\n" | passwd $token &> /dev/null
+echo -e "$token" >> $file_token
+echo -e "$usr  $token  $DIA     $HORA"  >> $file_client
+clear
+echo -e "$bar1"
+echo -e "$TITLE"
+echo -e "$bar2"
+echo ""
+echo -e " Datos del Usuario:"
+echo -e "\e[32m  Token ID: \e[0m"$token
+echo -e "\e[32m  Caducidad de la cuenta: \e[0m"$Expiration_Display
+echo -e ""
+echo -e "$bar1"
+echo -e "\e[32m  Host/IP: \e[0m"$IPADDR
+echo -e "\e[32m  Perto OpenSSH: \e[0m"$opensshport
+echo -e "\e[32m  Puerto Dropbear: \e[0m"$dropbearport
+echo -e "\e[32m  Puerto SSL: \e[0m"$stunnel4port
+echo -e "\e[32m  Puertos Squid: \e[0m"$squidport
+echo -e "\e[32m  Puertos Openvpn: \e[0m"$openvpnport
+echo -e "\e[32m  Puertos python: \e[0m"$openvpnport
+echo -e "$bar1"
+fi
+}
+
+#ELIMINAR ID
+eliminar () {
+  unset token
+  echo -e "$TITLE"
+echo -e ""
+    i=1
+	for total in `cat $file_token`; do
+	[[ -f "$total" ]] && continue
+	option_id[$i]="$total"
+    echo -e "$bar1"
+	echo -e "${azul} [$i] > $blanco$total"
+	let i++
+    done
+	i=$(($i - 1))
+    echo -e "$bar1"
+	while [[ -z ${option_id[$slct_option]} ]]; do
+read -p "seleccione [1-$i]: " slct_option
+tput cuu1 && tput dl1
+done
+token="${option_id[$slct_option]}"
+sleep 2
+egrep "^$token" /etc/passwd &> /dev/null
+if [ $? -eq 0 ]; then
+  userdel -f $token
+  rm -rf /home/$token
+  sed -i "s;$token;;g" $file_token
+  sed -i '/^$/d' $file_token
+  sed -i "/$token/d" $file_client
+  sed -i '/^$/d' $file_client
+	clear
+	echo -e ""
+  echo -e "$TITLE"
+  echo -e "$bar1"
+	echo -e " Token Eliminado con Exito"
+	echo -e "$bar1"
+else
+	clear
+	echo -e ""
+  echo -e "$TITLE"
+  echo -e "$bar1"
+	echo -e " El Token que ingresaste no existe"
+	echo -e "$bar1"
+fi
+}
+
+#EDITAR TOKEN
+editar (){
+unset token
+  echo -e "$TITLE"
+echo -e ""
+    i=1
+	for total in `cat $file_token`; do
+	[[ -f "$total" ]] && continue
+	option_id[$i]="$total"
+    echo -e "$bar1"
+	echo -e "${azul} [$i] > $blanco$total"
+	let i++
+    done
+	i=$(($i - 1))
+    echo -e "$bar1"
+	while [[ -z ${option_id[$slct_option]} ]]; do
+read -p "seleccione [1-$i]: " slct_option
+tput cuu1 && tput dl1
+done
+token="${option_id[$slct_option]}"
+sleep 2
+egrep "^$token" /etc/passwd >/dev/null
+if [ $? -eq 0 ]; then
+echo -e "${blanco}Ingrese el numero de dias${cierre}"
+echo -e "$bar2"
+read -p " [DГ­as]: " Days
+Today=`date +%s`
+Days_Detailed=$(( $Days * 86400 ))
+Expire_On=$(($Today + $Days_Detailed))
+Expiration=$(date -u --date="1970-01-01 $Expire_On sec GMT" +%Y/%m/%d)
+Expiration_Display=$(date -u --date="1970-01-01 $Expire_On sec GMT" '+%d %b %Y')
+passwd -u $token
+usermod -e $Expiration $token
+egrep "^$token" /etc/passwd >/dev/null
+echo -e "$PASSWDT\n$PASSWDT\n"|passwd $token &> /dev/null
+clear
+echo -e "$TILTE"
+echo -e "$bar1"
+echo -e ""
+echo -e " token ID: $token"
+echo -e "$bar2"
+echo -e " Caducidad de cuenta modificada: $Days Dias"
+echo -e "$bar2"
+echo -e " La cuenta vence el: $Expiration_Display"
+echo -e "$bar1"
+else
+clear
+echo -e "$TILTE"
+echo -e "$bar1"
+echo -e ""
+echo -e " El Token que ingresaste no existe"
+echo -e ""
+fi
+}
+#MOSTAR USURIOS
+lista (){
+	if [ -f /etc/debian_version ]; then
+	UIDN=1000
+elif [ -f /etc/redhat-release ]; then
+	UIDN=500
+elif [ -f /etc/ubuntu_version ]; then
+	UIDN=500
+else
+	UIDN=500
+fi
+clear
+echo -e "$TILTE"
+echo -e "$bar1"
+echo -e ""
+echo -e " Token ID               Expiracion"
+echo -e "$bar1"
+while read Checklist
+do
+        Spacer=""
+        Account="$(echo $Checklist | cut -d: -f1)"
+        ID="$(echo $Checklist | grep -v nobody | cut -d: -f3)"
+        Exp="$(chage -l $Account | grep "Account expires" | awk -F": " '{print $2}')"
+        if [[ $ID -ge $UIDN ]]; then
+        echo -e " $Account   " "   $Exp"
+        fi
+done < /etc/passwd
+No_Users="$(awk -F: '$3 >= '$UIDN' && $1 != "nobody" {print $1}' /etc/passwd | wc -l)"
+echo -e "$bar2"
+echo -e " Numero de Tokens: "$No_Users
+echo -e "$bar2"
+}
+#ELIMINAR EXPIRADOS
+expirados () {
+clear
+unset token
+echo -e ""
+echo -e "$TITLE"
+echo -e "$bar1"
+
+datenow=$(date +%s)
+for token in $(awk -F: '{print $1}' /etc/passwd); do
+expdate=$(chage -l $token|awk -F: '/Account expires/{print $2}')
+echo $expdate | grep -q never && continue
+echo -n "Token \`$token' expira el $expdate ... "
+expsec=$(date +%s --date="$expdate")
+diff=$(echo $datenow - $expsec|bc -l)
+echo $diff | grep -q ^\- && echo okay && continue
+userdel -r -f $token  &> /dev/null
+done
+echo -e ""
+echo -e "  Todos \e[31mLos token expirados\e[0m han sido Eliminados"
+echo -e "$bar1"
+}
+informacion_clientes () {
+  GreenBG="\033[42;31m"
+     echo -e "${GreenBG}                 INFORMACION DE CLIENTES                 ${cierre}"
+    echo -e "$bar2"
+    cat $file_client | column -t
+    echo -e "$bar1"
+
+}
+online (){                                                               
+clear
+TITLE="${blanco}Onlycode ${verdeR}VPN"
+
+if [ -e "/var/log/auth.log" ]; then
+        LOG="/var/log/auth.log";
+fi
+if [ -e "/var/log/secure" ]; then
+        LOG="/var/log/secure";
+fi
+                
+data=( `ps aux | grep -i dropbear | awk '{print $2}'`)
+GreenBG="\033[42;31m"
+     echo -e "${GreenBG}        Usuarios ONLINE Dropbear                ${cierre}"
+    echo -e "$bar2"
+    echo ""
+cat $LOG | grep -i dropbear | grep -i "Password auth succeeded" > /tmp/login-db.txt
+for PID in "${data[@]}"
+do
+        cat /tmp/login-db.txt | grep "dropbear\[$PID\]" > /tmp/login-db-pid.txt
+        NUM=`cat /tmp/login-db-pid.txt | wc -l`
+        USER=`cat /tmp/login-db-pid.txt | awk '{print $10}'`
+        IP=`cat /tmp/login-db-pid.txt | awk '{print $12}'`
+        if [ $NUM -eq 1 ]; then
+                echo -e "Token: $USER - ${verdeR}[ON]${cierre} -"
+                fi
+done
+GreenBG="\033[42;31m"
+echo ""
+     echo -e "${GreenBG}         Usuarios ONLINE OpenSSH                ${cierre}"
+    echo -e "$bar2"
+    echo ""
+cat $LOG | grep -i sshd | grep -i "Accepted password for" > /tmp/logins-db.txt
+data=( `ps aux | grep "\[priv\]" | sort -k 72 | awk '{print $2}'`);
+
+for PID in "${data[@]}"
+do
+        cat /tmp/logins-db.txt | grep "sshd\[$PID\]" > /tmp/login-db-pid.txt;
+        NUM=`cat /tmp/login-db-pid.txt | wc -l`;
+        USER=`cat /tmp/login-db-pid.txt | awk '{print $9}'`;
+        IP=`cat /tmp/login-db-pid.txt | awk '{print $11}'`;
+        if [ $NUM -eq 1 ]; then
+                echo -e "Token: $USER - ${verdeR}[ON]${cierre} -";
+        fi
+done
+if [ -f "/etc/openvpn/openvpn-status.log" ]; then
+        line=`cat /etc/openvpn/openvpn-status.log | wc -l`
+        a=$((3+((line-8)/2)))
+        b=$(((line-8)/2))
+        echo ""
+        echo -e "${GreenBG}          Usuarios ONLINE Openvpn               ${cierre}"
+    echo -e "$bar2"
+    echo ""
+        
+        cat /etc/openvpn/openvpn-status.log | head -n $a | tail -n $b | cut -d "," -f 1,2,5 | sed -e 's/,/   /g' > /tmp/vpn-login-db.txt
+        cat /tmp/vpn-login-db.txt
+fi
+
+echo " "
+echo " "
+}
+No_token="$(cat /etc/token/BD | wc -l)"
+
+# ==============================================
+# PANEL NEXT.JS CON DASHBOARD Y MENÚ COMPLETO
+# ==============================================
+
+instalar_panel_nextjs() {
+    clear
+    echo -e "$bar1"
+    echo -e "${verde}     INSTALADOR PANEL NEXT.JS - ONLYCODE VPN${cierre}"
+    echo -e "$bar1"
+    
+    # Verificar root
+    if [ "$EUID" -ne 0 ]; then 
+        echo -e "${rojo}❌ Ejecutar como root${cierre}"
+        return 1
+    fi
+    
+    # Solicitar configuración
+    echo -e "${amarillo}⚙️  Configuración del Panel${cierre}"
+    echo -e "$bar2"
+    read -p "Usuario admin [admin]: " ADMIN_USER
+    ADMIN_USER=${ADMIN_USER:-admin}
+    read -s -p "Contraseña admin [admin123]: " ADMIN_PASS
+    echo
+    ADMIN_PASS=${ADMIN_PASS:-admin123}
+    read -p "Puerto del panel web (ej: 3000, 8081, 9000) [3000]: " PANEL_PORT
+    PANEL_PORT=${PANEL_PORT:-3000}
+    
+    echo -e "\n${amarillo}📦 Instalando dependencias...${cierre}"
+    
+    # Instalar Node.js 18+
+    curl -fsSL https://deb.nodesource.com/setup_18.x | bash - >/dev/null 2>&1
+    apt-get install -y nodejs >/dev/null 2>&1
+    
+    # Instalar PM2 globalmente
+    npm install -g pm2 >/dev/null 2>&1
+    
+    # Crear estructura de directorios
+    PANEL_DIR="/var/www/onlycode-panel"
+    mkdir -p $PANEL_DIR
+    
+    echo -e "${verde}✅ Dependencias instaladas${cierre}"
+    
+    # Guardar credenciales
+    echo "$ADMIN_USER:$ADMIN_PASS" > /etc/onlycode-panel-auth
+    chmod 600 /etc/onlycode-panel-auth
+    
+    # ==============================================
+    # CREAR PANEL NEXT.JS COMPLETO
+    # ==============================================
+    echo -e "${amarillo}⚛️  Creando Panel Next.js con Dashboard...${cierre}"
+    
+    # package.json
+    cat > $PANEL_DIR/package.json << 'NEXTJSON'
+{
+  "name": "onlycode-vpn-panel",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start"
+  },
+  "dependencies": {
+    "next": "14.0.0",
+    "react": "18.2.0",
+    "react-dom": "18.2.0",
+    "react-hot-toast": "^2.4.1"
+  }
+}
+NEXTJSON
+
+    # next.config.js
+    cat > $PANEL_DIR/next.config.js << 'NEXTCONFIG'
+/** @type {import('next').NextConfig} */
+const nextConfig = {
+  output: 'standalone',
+  reactStrictMode: true,
+  swcMinify: true,
+}
+
+module.exports = nextConfig
+NEXTCONFIG
+
+    # Estructura de directorios
+    mkdir -p $PANEL_DIR/pages/api $PANEL_DIR/pages $PANEL_DIR/styles $PANEL_DIR/components
+    
+    # ==============================================
+    # COMPONENTES
+    # ==============================================
+    
+    # Componente Sidebar/Menú
+    cat > $PANEL_DIR/components/Sidebar.js << 'SIDEBAR'
+import { useState } from 'react'
+
+export default function Sidebar({ activePage, setActivePage }) {
+  const [collapsed, setCollapsed] = useState(false)
+
+  const menuItems = [
+    { id: 'dashboard', name: 'Dashboard', icon: '📊', color: '#00ff88' },
+    { id: 'users', name: 'Usuarios', icon: '👥', color: '#00aaff' },
+    { id: 'create', name: 'Crear Usuario', icon: '➕', color: '#ffaa00' },
+    { id: 'expired', name: 'Usuarios Vencidos', icon: '⚠️', color: '#ff4444' },
+    { id: 'online', name: 'Usuarios Online', icon: '🟢', color: '#00ff88' },
+    { id: 'settings', name: 'Configuración', icon: '⚙️', color: '#888' }
+  ]
+
+  return (
+    <div style={{
+      width: collapsed ? '70px' : '260px',
+      background: 'rgba(0,0,0,0.6)',
+      backdropFilter: 'blur(10px)',
+      height: '100vh',
+      position: 'fixed',
+      left: 0,
+      top: 0,
+      transition: 'width 0.3s',
+      borderRight: '1px solid rgba(255,255,255,0.1)',
+      zIndex: 100
+    }}>
+      <div style={{
+        padding: '20px',
+        textAlign: 'center',
+        borderBottom: '1px solid rgba(255,255,255,0.1)',
+        cursor: 'pointer'
+      }} onClick={() => setCollapsed(!collapsed)}>
+        {!collapsed ? (
+          <h2 style={{ color: '#00ff88', margin: 0, fontSize: '18px' }}>🚀 OnlyCode VPN</h2>
+        ) : (
+          <h2 style={{ color: '#00ff88', margin: 0, fontSize: '20px' }}>🚀</h2>
+        )}
+      </div>
+      
+      <nav style={{ padding: '20px 0' }}>
+        {menuItems.map(item => (
+          <div
+            key={item.id}
+            onClick={() => setActivePage(item.id)}
+            style={{
+              padding: collapsed ? '12px 0' : '12px 20px',
+              margin: '5px 10px',
+              borderRadius: '10px',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '12px',
+              background: activePage === item.id ? `rgba(${item.color === '#00ff88' ? '0,255,136' : '0,170,255'}, 0.15)` : 'transparent',
+              borderLeft: activePage === item.id ? `3px solid ${item.color}` : '3px solid transparent',
+              transition: 'all 0.3s'
+            }}
+          >
+            <span style={{ fontSize: '22px' }}>{item.icon}</span>
+            {!collapsed && <span style={{ color: '#fff', fontSize: '14px' }}>{item.name}</span>}
+          </div>
+        ))}
+      </nav>
+      
+      <div style={{
+        position: 'absolute',
+        bottom: 20,
+        left: 0,
+        right: 0,
+        textAlign: 'center',
+        fontSize: '12px',
+        color: '#666'
+      }}>
+        {!collapsed && <span>OnlyCode VPN v2.0</span>}
+      </div>
+    </div>
+  )
+}
+SIDEBAR
+
+    # ==============================================
+    # PÁGINA PRINCIPAL CON DASHBOARD
+    # ==============================================
+    
+    # Página principal (Dashboard)
+    cat > $PANEL_DIR/pages/index.js << 'INDEXJS'
+import { useState, useEffect } from 'react'
+import toast from 'react-hot-toast'
+import Sidebar from '../components/Sidebar'
+import CreateUserModal from '../components/CreateUserModal'
+
+export default function Home() {
+  const [users, setUsers] = useState([])
+  const [stats, setStats] = useState({
+    total: 0,
+    active: 0,
+    expired: 0,
+    online: 0,
+    server_load: 0
+  })
+  const [activePage, setActivePage] = useState('dashboard')
+  const [loading, setLoading] = useState(true)
+  const [auth, setAuth] = useState('')
+  const [showCreateModal, setShowCreateModal] = useState(false)
+
+  useEffect(() => {
+    const user = prompt('🔐 Usuario admin:') || 'admin'
+    const pass = prompt('🔑 Contraseña:') || 'admin123'
+    setAuth(btoa(`${user}:${pass}`))
+  }, [])
+
+  const fetchData = async () => {
+    if (!auth) return
+    try {
+      const res = await fetch('/api/users', { 
+        headers: { 'Authorization': `Basic ${auth}` } 
+      })
+      
+      if (res.ok) {
+        const usersData = await res.json()
+        setUsers(usersData)
+        
+        // Calcular estadísticas
+        const now = new Date()
+        const activeUsers = usersData.filter(u => {
+          if (u.expiration === 'Nunca expira') return true
+          return new Date(u.expiration) > now
+        })
+        const expiredUsers = usersData.filter(u => {
+          if (u.expiration === 'Nunca expira') return false
+          return new Date(u.expiration) <= now
+        })
+        
+        setStats({
+          total: usersData.length,
+          active: activeUsers.length,
+          expired: expiredUsers.length,
+          online: usersData.filter(u => u.online).length || 0,
+          server_load: usersData.server_load || 0
+        })
+      }
+      
+      // Obtener stats del servidor
+      const statsRes = await fetch('/api/stats', { 
+        headers: { 'Authorization': `Basic ${auth}` } 
+      })
+      if (statsRes.ok) {
+        const serverStats = await statsRes.json()
+        setStats(prev => ({ ...prev, online: serverStats.online_users || 0, server_load: serverStats.server_load || 0 }))
+      }
+    } catch (error) {
+      toast.error('Error al cargar datos')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    if (auth) {
+      fetchData()
+      const interval = setInterval(fetchData, 15000)
+      return () => clearInterval(interval)
+    }
+  }, [auth])
+
+  const createUser = async (userData) => {
+    try {
+      const res = await fetch('/api/users', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Basic ${auth}`
+        },
+        body: JSON.stringify(userData)
+      })
+
+      const data = await res.json()
+      if (data.error) {
+        toast.error(data.error)
+      } else {
+        toast.success(`✅ Usuario creado!\nUsuario: ${data.username}\nContraseña: ${data.password}`)
+        setShowCreateModal(false)
+        fetchData()
+      }
+    } catch (error) {
+      toast.error('Error al crear usuario')
+    }
+  }
+
+  const deleteUser = async (username) => {
+    if (confirm(`¿Eliminar usuario ${username}?`)) {
+      try {
+        const res = await fetch('/api/delete', {
+          method: 'DELETE',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Basic ${auth}`
+          },
+          body: JSON.stringify({ username })
+        })
+        
+        if (res.ok) {
+          toast.success('Usuario eliminado')
+          fetchData()
+        } else {
+          toast.error('Error al eliminar')
+        }
+      } catch (error) {
+        toast.error('Error al eliminar')
+      }
+    }
+  }
+
+  const extendUser = async (username) => {
+    const days = prompt('¿Cuántos días agregar?', '30')
+    if (days && parseInt(days) > 0) {
+      try {
+        const res = await fetch('/api/extend', {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Basic ${auth}`
+          },
+          body: JSON.stringify({ username, days: parseInt(days) })
+        })
+        
+        if (res.ok) {
+          toast.success(`Extendido ${days} días`)
+          fetchData()
+        } else {
+          toast.error('Error al extender')
+        }
+      } catch (error) {
+        toast.error('Error al extender')
+      }
+    }
+  }
+
+  // Tarjeta de estadísticas
+  const StatCard = ({ title, value, icon, color }) => (
+    <div style={{
+      background: 'rgba(0,0,0,0.5)',
+      backdropFilter: 'blur(10px)',
+      padding: '25px',
+      borderRadius: '20px',
+      border: `1px solid ${color}`,
+      transition: 'transform 0.3s'
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <div>
+          <div style={{ fontSize: '14px', color: '#888', marginBottom: '10px' }}>{title}</div>
+          <div style={{ fontSize: '42px', fontWeight: 'bold', color: color }}>{value}</div>
+        </div>
+        <div style={{ fontSize: '48px' }}>{icon}</div>
+      </div>
+    </div>
+  )
+
+  if (loading) {
+    return (
+      <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh', background: '#0a0a0a' }}>
+        <div style={{ textAlign: 'center' }}>
+          <div style={{ fontSize: '48px', marginBottom: '20px' }}>🚀</div>
+          <h2 style={{ color: '#fff' }}>Cargando panel...</h2>
+        </div>
+      </div>
+    )
+  }
+
+  const filteredUsers = () => {
+    switch(activePage) {
+      case 'users': return users
+      case 'expired': return users.filter(u => {
+        if (u.expiration === 'Nunca expira') return false
+        return new Date(u.expiration) <= new Date()
+      })
+      case 'online': return users.filter(u => u.online)
+      default: return []
+    }
+  }
+
+  return (
+    <div style={{ minHeight: '100vh', background: 'linear-gradient(135deg, #0a0a0a 0%, #1a1a2e 100%)' }}>
+      <Sidebar activePage={activePage} setActivePage={setActivePage} />
+      
+      <div style={{ marginLeft: '280px', padding: '30px', transition: 'margin-left 0.3s' }}>
+        
+        {/* Dashboard View */}
+        {activePage === 'dashboard' && (
+          <>
+            <div style={{ marginBottom: '30px' }}>
+              <h1 style={{ color: '#fff', marginBottom: '10px' }}>Dashboard</h1>
+              <p style={{ color: '#888' }}>Bienvenido al panel de control de OnlyCode VPN</p>
+            </div>
+            
+            <div style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))',
+              gap: '20px',
+              marginBottom: '30px'
+            }}>
+              <StatCard title="Total Usuarios" value={stats.total} icon="👥" color="#00ff88" />
+              <StatCard title="Usuarios Activos" value={stats.active} icon="✅" color="#00aaff" />
+              <StatCard title="Usuarios Vencidos" value={stats.expired} icon="⚠️" color="#ff4444" />
+              <StatCard title="Usuarios Online" value={stats.online} icon="🟢" color="#00ff88" />
+              <StatCard title="Carga del Servidor" value={stats.server_load} icon="📊" color="#ffaa00" />
+              <StatCard title="Servidores Activos" value="3" icon="🖥️" color="#aa66ff" />
+            </div>
+
+            <div style={{
+              background: 'rgba(0,0,0,0.5)',
+              backdropFilter: 'blur(10px)',
+              borderRadius: '20px',
+              padding: '25px',
+              border: '1px solid rgba(255,255,255,0.1)'
+            }}>
+              <h3 style={{ color: '#00ff88', marginBottom: '20px' }}>Últimos Usuarios Creados</h3>
+              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                <thead>
+                  <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.1)' }}>
+                    <th style={{ textAlign: 'left', padding: '12px', color: '#888' }}>Usuario</th>
+                    <th style={{ textAlign: 'left', padding: '12px', color: '#888' }}>Expiración</th>
+                    <th style={{ textAlign: 'left', padding: '12px', color: '#888' }}>Estado</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {users.slice(0, 5).map((user, idx) => (
+                    <tr key={idx} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+                      <td style={{ padding: '12px', color: '#fff' }}>{user.username}</td>
+                      <td style={{ padding: '12px', color: '#aaa' }}>{user.expiration}</td>
+                      <td style={{ padding: '12px', color: user.status === 'active' ? '#00ff88' : '#ff4444' }}>
+                        {user.status === 'active' ? '🟢 Activo' : '🔴 Expirado'}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </>
+        )}
+
+        {/* Users List View */}
+        {(activePage === 'users' || activePage === 'expired' || activePage === 'online') && (
+          <>
+            <div style={{ marginBottom: '30px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div>
+                <h1 style={{ color: '#fff', marginBottom: '10px' }}>
+                  {activePage === 'users' && '📋 Lista de Usuarios'}
+                  {activePage === 'expired' && '⚠️ Usuarios Vencidos'}
+                  {activePage === 'online' && '🟢 Usuarios Online'}
+                </h1>
+                <p style={{ color: '#888' }}>Total: {filteredUsers().length} usuarios</p>
+              </div>
+              <button onClick={() => setShowCreateModal(true)} style={{
+                padding: '12px 24px',
+                background: '#00ff88',
+                color: '#000',
+                border: 'none',
+                borderRadius: '10px',
+                cursor: 'pointer',
+                fontWeight: 'bold'
+              }}>
+                + Crear Usuario
+              </button>
+            </div>
+
+            <div style={{
+              background: 'rgba(0,0,0,0.5)',
+              backdropFilter: 'blur(10px)',
+              borderRadius: '20px',
+              overflow: 'auto',
+              border: '1px solid rgba(255,255,255,0.1)'
+            }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                <thead>
+                  <tr style={{ background: 'rgba(0,0,0,0.3)' }}>
+                    <th style={{ padding: '15px', textAlign: 'left', color: '#00ff88' }}>Usuario</th>
+                    <th style={{ padding: '15px', textAlign: 'left', color: '#00ff88' }}>Expiración</th>
+                    <th style={{ padding: '15px', textAlign: 'left', color: '#00ff88' }}>Estado</th>
+                    <th style={{ padding: '15px', textAlign: 'left', color: '#00ff88' }}>Acciones</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredUsers().map((user, index) => (
+                    <tr key={index} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+                      <td style={{ padding: '15px', color: '#fff' }}>{user.username}</td>
+                      <td style={{ padding: '15px', color: '#aaa' }}>{user.expiration}</td>
+                      <td style={{ padding: '15px', color: user.status === 'active' ? '#00ff88' : '#ff4444' }}>
+                        {user.status === 'active' ? '🟢 Activo' : '🔴 Expirado'}
+                      </td>
+                      <td style={{ padding: '15px' }}>
+                        <button onClick={() => extendUser(user.username)} style={{
+                          padding: '8px 16px',
+                          marginRight: '10px',
+                          background: '#ffaa00',
+                          color: '#000',
+                          border: 'none',
+                          borderRadius: '6px',
+                          cursor: 'pointer'
+                        }}>Extender</button>
+                        <button onClick={() => deleteUser(user.username)} style={{
+                          padding: '8px 16px',
+                          background: '#ff4444',
+                          color: '#fff',
+                          border: 'none',
+                          borderRadius: '6px',
+                          cursor: 'pointer'
+                        }}>Eliminar</button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </>
+        )}
+
+        {/* Create User View */}
+        {activePage === 'create' && (
+          <>
+            <div style={{ marginBottom: '30px' }}>
+              <h1 style={{ color: '#fff', marginBottom: '10px' }}>➕ Crear Nuevo Usuario</h1>
+              <p style={{ color: '#888' }}>Complete los datos para crear un nuevo usuario VPN</p>
+            </div>
+
+            <div style={{
+              background: 'rgba(0,0,0,0.5)',
+              backdropFilter: 'blur(10px)',
+              borderRadius: '20px',
+              padding: '30px',
+              maxWidth: '500px',
+              border: '1px solid rgba(255,255,255,0.1)'
+            }}>
+              <div style={{ marginBottom: '20px' }}>
+                <label style={{ color: '#00ff88', display: 'block', marginBottom: '8px' }}>Nombre de Usuario</label>
+                <input
+                  id="username"
+                  placeholder="Ej: usuario123"
+                  style={{
+                    width: '100%',
+                    padding: '12px',
+                    background: 'rgba(255,255,255,0.1)',
+                    border: '1px solid rgba(255,255,255,0.2)',
+                    borderRadius: '8px',
+                    color: '#fff'
+                  }}
+                />
+              </div>
+              <div style={{ marginBottom: '20px' }}>
+                <label style={{ color: '#00ff88', display: 'block', marginBottom: '8px' }}>Días de Expiración</label>
+                <select id="days" style={{
+                  width: '100%',
+                  padding: '12px',
+                  background: 'rgba(255,255,255,0.1)',
+                  border: '1px solid rgba(255,255,255,0.2)',
+                  borderRadius: '8px',
+                  color: '#fff'
+                }}>
+                  <option value="7">7 días</option>
+                  <option value="15">15 días</option>
+                  <option value="30" selected>30 días</option>
+                  <option value="60">60 días</option>
+                  <option value="90">90 días</option>
+                  <option value="180">180 días</option>
+                  <option value="365">365 días</option>
+                </select>
+              </div>
+              <button onClick={() => {
+                const username = document.getElementById('username').value
+                const days = document.getElementById('days').value
+                if (username) {
+                  createUser({ username, days: parseInt(days) })
+                  document.getElementById('username').value = ''
+                } else {
+                  toast.error('Ingrese un nombre de usuario')
+                }
+              }} style={{
+                width: '100%',
+                padding: '14px',
+                background: '#00ff88',
+                color: '#000',
+                border: 'none',
+                borderRadius: '8px',
+                cursor: 'pointer',
+                fontWeight: 'bold',
+                fontSize: '16px'
+              }}>
+                Crear Usuario
+              </button>
+            </div>
+          </>
+        )}
+
+        {/* Settings View */}
+        {activePage === 'settings' && (
+          <>
+            <div style={{ marginBottom: '30px' }}>
+              <h1 style={{ color: '#fff', marginBottom: '10px' }}>⚙️ Configuración</h1>
+              <p style={{ color: '#888' }}>Información del sistema y configuración del panel</p>
+            </div>
+
+            <div style={{
+              background: 'rgba(0,0,0,0.5)',
+              backdropFilter: 'blur(10px)',
+              borderRadius: '20px',
+              padding: '30px',
+              border: '1px solid rgba(255,255,255,0.1)'
+            }}>
+              <h3 style={{ color: '#00ff88', marginBottom: '20px' }}>Información del Servidor</h3>
+              <div style={{ marginBottom: '15px' }}>
+                <strong style={{ color: '#aaa' }}>IP del Servidor:</strong>
+                <span style={{ color: '#fff', marginLeft: '10px' }} id="server-ip">Cargando...</span>
+              </div>
+              <div style={{ marginBottom: '15px' }}>
+                <strong style={{ color: '#aaa' }}>Sistema Operativo:</strong>
+                <span style={{ color: '#fff', marginLeft: '10px' }} id="os-info">Cargando...</span>
+              </div>
+              <div style={{ marginBottom: '15px' }}>
+                <strong style={{ color: '#aaa' }}>Versión del Panel:</strong>
+                <span style={{ color: '#fff', marginLeft: '10px' }}>v2.0.0</span>
+              </div>
+              <div style={{ marginBottom: '15px' }}>
+                <strong style={{ color: '#aaa' }}>Comandos útiles:</strong>
+                <div style={{ background: 'rgba(0,0,0,0.3)', padding: '15px', borderRadius: '10px', marginTop: '10px' }}>
+                  <code style={{ color: '#00ff88', display: 'block', marginBottom: '8px' }}>pm2 logs onlycode-panel</code>
+                  <code style={{ color: '#00ff88', display: 'block', marginBottom: '8px' }}>pm2 restart onlycode-panel</code>
+                  <code style={{ color: '#00ff88', display: 'block' }}>pm2 status</code>
+                </div>
+              </div>
+            </div>
+          </>
+        )}
+      </div>
+
+      {showCreateModal && (
+        <div onClick={() => setShowCreateModal(false)} style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          background: 'rgba(0,0,0,0.8)',
+          backdropFilter: 'blur(5px)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 1000
+        }}>
+          <div onClick={(e) => e.stopPropagation()} style={{
+            background: '#1a1a2e',
+            padding: '30px',
+            borderRadius: '20px',
+            minWidth: '400px',
+            border: '1px solid #00ff88'
+          }}>
+            <h2 style={{ marginBottom: '20px' }}>Crear Nuevo Usuario</h2>
+            <input
+              id="modal-username"
+              type="text"
+              placeholder="Nombre de usuario"
+              style={{
+                width: '100%',
+                padding: '12px',
+                marginBottom: '15px',
+                background: 'rgba(255,255,255,0.1)',
+                border: '1px solid rgba(255,255,255,0.2)',
+                borderRadius: '8px',
+                color: '#fff'
+              }}
+            />
+            <select id="modal-days" style={{
+              width: '100%',
+              padding: '12px',
+              marginBottom: '20px',
+              background: 'rgba(255,255,255,0.1)',
+              border: '1px solid rgba(255,255,255,0.2)',
+              borderRadius: '8px',
+              color: '#fff'
+            }}>
+              <option value="7">7 días</option>
+              <option value="15">15 días</option>
+              <option value="30" selected>30 días</option>
+              <option value="60">60 días</option>
+              <option value="90">90 días</option>
+              <option value="180">180 días</option>
+              <option value="365">365 días</option>
+            </select>
+            <div style={{ display: 'flex', gap: '10px' }}>
+              <button onClick={() => {
+                const username = document.getElementById('modal-username').value
+                const days = document.getElementById('modal-days').value
+                if (username) {
+                  createUser({ username, days: parseInt(days) })
+                } else {
+                  toast.error('Ingrese un nombre de usuario')
+                }
+              }} style={{
+                flex: 1,
+                padding: '12px',
+                background: '#00ff88',
+                color: '#000',
+                border: 'none',
+                borderRadius: '8px',
+                cursor: 'pointer'
+              }}>Crear</button>
+              <button onClick={() => setShowCreateModal(false)} style={{
+                flex: 1,
+                padding: '12px',
+                background: '#ff4444',
+                color: '#fff',
+                border: 'none',
+                borderRadius: '8px',
+                cursor: 'pointer'
+              }}>Cancelar</button>
+            </div>
+          </div>
+        </div>
+      )}
+      
+      <script dangerouslySetInnerHTML={{
+        __html: `
+          fetch('/api/health').then(r => r.json()).then(d => {
+            fetch('https://api.ipify.org?format=json').then(r => r.json()).then(ip => {
+              document.getElementById('server-ip') && (document.getElementById('server-ip').innerText = ip.ip)
+            })
+          })
+          fetch('/api/stats', { headers: { 'Authorization': 'Basic ' + localStorage.getItem('auth') } })
+        `
+      }} />
+    </div>
+  )
+}
+INDEXJS
+
+    # Componente CreateUserModal
+    cat > $PANEL_DIR/components/CreateUserModal.js << 'MODAL'
+import { useState } from 'react'
+import toast from 'react-hot-toast'
+
+export default function CreateUserModal({ isOpen, onClose, onCreate, auth }) {
+  const [username, setUsername] = useState('')
+  const [days, setDays] = useState(30)
+  const [loading, setLoading] = useState(false)
+
+  if (!isOpen) return null
+
+  const handleSubmit = async () => {
+    if (!username) {
+      toast.error('Ingrese un nombre de usuario')
+      return
+    }
+    
+    setLoading(true)
+    await onCreate({ username, days })
+    setLoading(false)
+    setUsername('')
+    setDays(30)
+    onClose()
+  }
+
+  return (
+    <div onClick={onClose} style={{
+      position: 'fixed',
+      top: 0,
+      left: 0,
+      right: 0,
+      bottom: 0,
+      background: 'rgba(0,0,0,0.8)',
+      backdropFilter: 'blur(5px)',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      zIndex: 1000
+    }}>
+      <div onClick={(e) => e.stopPropagation()} style={{
+        background: '#1a1a2e',
+        padding: '30px',
+        borderRadius: '20px',
+        minWidth: '400px',
+        border: '1px solid #00ff88'
+      }}>
+        <h2 style={{ marginBottom: '20px', color: '#fff' }}>➕ Crear Nuevo Usuario</h2>
+        
+        <input
+          type="text"
+          placeholder="Nombre de usuario"
+          value={username}
+          onChange={(e) => setUsername(e.target.value)}
+          style={{
+            width: '100%',
+            padding: '12px',
+            marginBottom: '15px',
+            background: 'rgba(255,255,255,0.1)',
+            border: '1px solid rgba(255,255,255,0.2)',
+            borderRadius: '8px',
+            color: '#fff'
+          }}
+        />
+        
+        <select
+          value={days}
+          onChange={(e) => setDays(parseInt(e.target.value))}
+          style={{
+            width: '100%',
+            padding: '12px',
+            marginBottom: '20px',
+            background: 'rgba(255,255,255,0.1)',
+            border: '1px solid rgba(255,255,255,0.2)',
+            borderRadius: '8px',
+            color: '#fff'
+          }}
+        >
+          <option value="7">7 días</option>
+          <option value="15">15 días</option>
+          <option value="30" selected>30 días</option>
+          <option value="60">60 días</option>
+          <option value="90">90 días</option>
+          <option value="180">180 días</option>
+          <option value="365">365 días</option>
+        </select>
+        
+        <div style={{ display: 'flex', gap: '10px' }}>
+          <button onClick={handleSubmit} disabled={loading} style={{
+            flex: 1,
+            padding: '12px',
+            background: loading ? '#666' : '#00ff88',
+            color: '#000',
+            border: 'none',
+            borderRadius: '8px',
+            cursor: loading ? 'not-allowed' : 'pointer',
+            fontWeight: 'bold'
+          }}>
+            {loading ? 'Creando...' : 'Crear Usuario'}
+          </button>
+          <button onClick={onClose} style={{
+            flex: 1,
+            padding: '12px',
+            background: '#ff4444',
+            color: '#fff',
+            border: 'none',
+            borderRadius: '8px',
+            cursor: 'pointer'
+          }}>
+            Cancelar
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+MODAL
+
+    # ==============================================
+    # API ROUTES
+    # ==============================================
+    
+    # API principal
+    cat > $PANEL_DIR/pages/api/[action].js << 'APIROUTE'
+import { exec } from 'child_process';
+import { promisify } from 'util';
+import fs from 'fs/promises';
+
+const execAsync = promisify(exec);
+
+const TOKEN_FILE = '/etc/token/BD';
+const CLIENT_FILE = '/etc/token/.clientes';
+
+function authenticate(req) {
+  const authHeader = req.headers.authorization;
+  if (!authHeader) return false;
+  
+  const base64 = authHeader.split(' ')[1];
+  const [user, pass] = Buffer.from(base64, 'base64').toString().split(':');
+  
+  return (user === 'admin' && pass === 'admin123');
+}
+
+function isUserActive(expiration) {
+  if (expiration === 'Nunca expira' || expiration === 'never') return true;
+  return new Date(expiration) > new Date();
+}
+
+export default async function handler(req, res) {
+  const { action } = req.query;
+  
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  
+  if (req.method === 'OPTIONS') {
+    return res.status(200).end();
+  }
+  
+  if (action !== 'health') {
+    const auth = req.headers.authorization;
+    if (!auth) {
+      return res.status(401).json({ error: 'No autorizado' });
+    }
+  }
+  
+  try {
+    switch (action) {
+      case 'users':
+        if (req.method === 'GET') {
+          const { stdout } = await execAsync("awk -F: '$3 >= 1000 && $1 != \"nobody\" {print $1}' /etc/passwd");
+          const users = stdout.trim().split('\n').filter(u => u);
+          
+          const usersData = await Promise.all(users.map(async (user) => {
+            const { stdout: expOut } = await execAsync(`chage -l ${user} | grep "Account expires" | cut -d: -f2`);
+            let expiration = expOut.trim();
+            expiration = expiration === 'never' ? 'Nunca expira' : expiration;
+            const isActive = isUserActive(expiration);
+            
+            return {
+              username: user,
+              expiration: expiration,
+              status: isActive ? 'active' : 'inactive',
+              online: false
+            };
+          }));
+          
+          return res.status(200).json(usersData);
+        } else if (req.method === 'POST') {
+          const { username, days } = req.body;
+          if (!username || !days) {
+            return res.status(400).json({ error: 'Faltan datos' });
+          }
+          
+          const password = Math.random().toString(36).slice(-8) + Math.random().toString(36).slice(-4);
+          const expDate = new Date();
+          expDate.setDate(expDate.getDate() + parseInt(days));
+          const expDateStr = expDate.toISOString().split('T')[0];
+          
+          const { stderr } = await execAsync(
+            `useradd -m -s /bin/false -e ${expDateStr} ${username} 2>&1 && echo "${username}:${password}" | chpasswd 2>&1`
+          );
+          
+          if (stderr && !stderr.includes('warning')) {
+            return res.status(500).json({ error: stderr });
+          }
+          
+          await fs.appendFile(TOKEN_FILE, username + '\n').catch(() => {});
+          
+          return res.status(201).json({ 
+            success: true, 
+            username, 
+            password,
+            expiration: expDateStr,
+            days
+          });
+        }
+        break;
+        
+      case 'stats':
+        const [totalUsers, onlineUsers, loadAvg] = await Promise.all([
+          execAsync("cat /etc/passwd | grep -c '/home'").then(r => parseInt(r.stdout.trim())).catch(() => 0),
+          execAsync("ps aux | grep -E 'sshd|dropbear' | grep -v grep | wc -l").then(r => parseInt(r.stdout.trim())).catch(() => 0),
+          execAsync("cat /proc/loadavg | awk '{print $1}'").then(r => parseFloat(r.stdout.trim())).catch(() => 0)
+        ]);
+        
+        return res.status(200).json({
+          total_users: totalUsers,
+          online_users: onlineUsers,
+          server_load: loadAvg
+        });
+        
+      case 'delete':
+        if (req.method === 'DELETE') {
+          const { username } = req.body;
+          if (!username) return res.status(400).json({ error: 'Usuario requerido' });
+          
+          await execAsync(`userdel -r -f ${username} 2>&1`);
+          return res.status(200).json({ success: true });
+        }
+        break;
+        
+      case 'extend':
+        if (req.method === 'PUT') {
+          const { username, days } = req.body;
+          if (!username || !days) return res.status(400).json({ error: 'Faltan datos' });
+          
+          const newDate = new Date();
+          newDate.setDate(newDate.getDate() + parseInt(days));
+          const newDateStr = newDate.toISOString().split('T')[0];
+          
+          await execAsync(`usermod -e ${newDateStr} ${username} 2>&1`);
+          return res.status(200).json({ success: true, new_expiration: newDateStr });
+        }
+        break;
+        
+      case 'health':
+        return res.status(200).json({ status: 'ok', timestamp: new Date().toISOString() });
+        
+      default:
+        return res.status(404).json({ error: 'Endpoint no encontrado' });
+    }
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: error.message });
+  }
+  
+  return res.status(405).json({ error: 'Método no permitido' });
+}
+APIROUTE
+
+    # _app.js
+    cat > $PANEL_DIR/pages/_app.js << 'APPJS'
+import '../styles/globals.css'
+import { Toaster } from 'react-hot-toast'
+
+function MyApp({ Component, pageProps }) {
+  return (
+    <>
+      <Component {...pageProps} />
+      <Toaster position="top-right" toastOptions={{
+        style: {
+          background: '#1a1a2e',
+          color: '#fff',
+          border: '1px solid #00ff88'
+        }
+      }} />
+    </>
+  )
+}
+
+export default MyApp
+APPJS
+
+    # Estilos globales
+    cat > $PANEL_DIR/styles/globals.css << 'CSS'
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  background: linear-gradient(135deg, #0a0a0a 0%, #1a1a2e 100%);
+  color: #fff;
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+  min-height: 100vh;
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: rgba(0,0,0,0.3);
+  border-radius: 10px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #00ff88;
+  border-radius: 10px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #00cc6a;
+}
+CSS
+
+    # ==============================================
+    # INSTALACIÓN
+    # ==============================================
+    
+    cd $PANEL_DIR
+    npm install --legacy-peer-deps >/dev/null 2>&1
+    
+    echo -e "${amarillo}🏗️  Construyendo panel Next.js...${cierre}"
+    npm run build >/dev/null 2>&1
+    
+    if [ "$PANEL_PORT" = "80" ] || [ "$PANEL_PORT" = "443" ]; then
+      systemctl stop apache2 nginx 2>/dev/null
+    fi
+    
+    pm2 delete onlycode-panel >/dev/null 2>&1
+    cd $PANEL_DIR
+    pm2 start npm --name "onlycode-panel" -- start -- -p $PANEL_PORT
+    pm2 save
+    pm2 startup >/dev/null 2>&1
+    
+    if command -v ufw &> /dev/null; then
+        ufw allow $PANEL_PORT/tcp >/dev/null 2>&1
+    fi
+    
+    IPADDR=$(wget -4qO- http://ipinfo.io/ip 2>/dev/null || hostname -I | awk '{print $1}')
+    
+    clear
+    echo -e "$bar1"
+    echo -e "${verde}✅ PANEL NEXT.JS CON DASHBOARD INSTALADO${cierre}"
+    echo -e "$bar1"
+    echo -e "${blanco}📱 Panel Web:${cierre} ${amarillo}http://$IPADDR:$PANEL_PORT${cierre}"
+    echo -e "${blanco}👤 Usuario Admin:${cierre} ${verde}$ADMIN_USER${cierre}"
+    echo -e "${blanco}🔑 Contraseña:${cierre} ${verde}$ADMIN_PASS${cierre}"
+    echo -e "$bar2"
+    echo -e "${amarillo}📋 CARACTERÍSTICAS DEL PANEL:${cierre}"
+    echo -e "  ${blanco}• Dashboard con tarjetas de estadísticas${cierre}"
+    echo -e "  ${blanco}• Total de usuarios | Activos | Vencidos | Online${cierre}"
+    echo -e "  ${blanco}• Menú lateral con navegación${cierre}"
+    echo -e "  ${blanco}• Lista completa de usuarios${cierre}"
+    echo -e "  ${blanco}• Usuarios vencidos (filtro automático)${cierre}"
+    echo -e "  ${blanco}• Usuarios online en tiempo real${cierre}"
+    echo -e "  ${blanco}• Creación rápida de usuarios${cierre}"
+    echo -e "  ${blanco}• Extensión de expiración${cierre}"
+    echo -e "  ${blanco}• Eliminación de usuarios${cierre}"
+    echo -e "$bar2"
+    echo -e "${amarillo}📊 Comandos útiles:${cierre}"
+    echo -e "  ${blanco}• Ver logs:${cierre} pm2 logs onlycode-panel"
+    echo -e "  ${blanco}• Reiniciar:${cierre} pm2 restart onlycode-panel"
+    echo -e "  ${blanco}• Ver status:${cierre} pm2 status"
+    echo -e "$bar1"
+    
+    read -p "Presione ENTER para continuar..."
+}
+
+#MENU DE USUARIOS
+menu () {
+  clear
+echo -e "${melon}               == Token Auth == (${amarillo}onlycode${cierre}${melon})
+${bar1}
+${morado}TOTAL DE REGISTROS: ${rojo}>${cierre} ${azul}ID: ${blanco}$No_token  ${cierre}
+${bar3}
+${azul}[1]${cierre} ${rojo}>${cierre} ${blanco}Agregar ${verdeR}ID${cierre}
+${azul}[2]${cierre} ${rojo}>${cierre} ${blanco}Eliminar ${rojo}ID${cierre}
+${azul}[3]${cierre} ${rojo}>${cierre} ${blanco}Editar Expiracion ${verde}ID${cierre}
+${azul}[4]${cierre} ${rojo}>${cierre} ${blanco}Lista de ${verde}ID${cierre}
+${azul}[5]${cierre} ${rojo}>${cierre} ${blanco}Eliminar ${verde}ID ${blanco}Expirados${cierre}
+${azul}[6]${cierre} ${rojo}>${cierre} ${blanco}Informacion de Clientes${cierre}
+${azul}[7]${cierre} ${rojo}>${cierre} ${blanco}Token ${verdeR}Activos${cierre}
+${azul}[8]${cierre} ${rojo}>${cierre} ${blanco}Habilitar Panel Web${cierre}
+${azul}[9]${cierre} ${rojo}>${cierre} ${blanco}Instalar Panel Next.js${cierre}
+${azul}[0]${cierre} ${rojo}>${cierre} ${rojo}SALIR${cierre}
+${bar2}"
+read -p "$(echo -e "${blanco}seleccione [0-9]:${cierre}")" selection
+case "$selection" in
+	1)crear ;;
+	2)eliminar ;;
+  3)editar ;;
+  4)lista ;;
+  5)expirados ;;
+  6)informacion_clientes;;
+  7)online;;
+  8)instalar_panel_web ;;
+  9)instalar_panel_nextjs ;;
+	0)cd $HOME && exit 0;;
+	*)
+	echo -e "${rojo} Porfavor seleccione del [0-9]${cierre}"
+	;;
+esac
+}
+if [ -f $file_pass ]; then
+	    echo
+	    else
+    define
+fi
+msg
+menu
