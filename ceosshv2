@@ -19,7 +19,7 @@ bar3="\033[38;5;226m--------------------- = MENU = --------------------------\03
 
 # URLs de descarga del panel (actualizar con tus URLs)
 PANEL_ZIP_URL="https://tu-servidor.com/ceo-ssh-panel.zip"
-GITHUB_REPO="https://github.com/tu-usuario/ceo-ssh-panel/archive/main.zip"
+GITHUB_REPO="https://raw.githubusercontent.com/RmXF/Dev/main/ceo-ssh-panel.zip"
 
 # Variables de instalación
 INSTALL_DIR="/var/www/ceo-ssh"
