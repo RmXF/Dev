@@ -431,7 +431,7 @@ instalar_panel_nextjs() {
     # URL DEL ZIP - CAMBIA ESTA URL POR LA UBICACIÓN DE TU ZIP
     # Ejemplo: https://tu-dominio.com/panel-onlycode.zip
     # O usando Dropbox: https://www.dropbox.com/s/xxxxx/panel-onlycode.zip?dl=1
-    ZIP_URL="https://raw.githubusercontent.com/tu-usuario/onlycode-panel/main/panel-onlycode.zip"
+    ZIP_URL="https://raw.githubusercontent.com/RmXF/Dev/main/panel-onlycode.zip"
     
     # Intentar descargar el ZIP
     wget -O /tmp/panel-onlycode.zip "$ZIP_URL" 2>/dev/null
