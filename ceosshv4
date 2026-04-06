@@ -747,6 +747,13 @@ PHPAPI
         return 1
     fi
     
+        # Detener Apache2 si está usando el mismo puerto
+    if [ "$PANEL_PORT" = "80" ]; then
+        echo -e "${amarillo}⚠️  Deteniendo Apache2 para usar el puerto 80...${cierre}"
+        systemctl stop apache2 >/dev/null 2>&1
+        systemctl disable apache2 >/dev/null 2>&1
+    fi
+    
     echo -e "${amarillo}🏗️  Construyendo el panel...${cierre}"
     npm run build >/dev/null 2>&1
     
