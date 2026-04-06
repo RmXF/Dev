@@ -1,0 +1,1436 @@
+#!/bin/bash
+
+# ==============================================
+# CEO SSH PANEL - INSTALADOR TODO-EN-UNO
+# Panel Profesional con Next.js + PHP + MySQL
+# Versión: 1.0.0
+# ==============================================
+
+set -e
+
+# Colores
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+PURPLE='\033[0;35m'
+CYAN='\033[0;36m'
+WHITE='\033[1;37m'
+NC='\033[0m'
+
+# Variables
+PANEL_VERSION="1.0.0"
+PANEL_NAME="CEO SSH"
+PANEL_PORT="80"
+API_PORT="3001"
+WS_PORT="3002"
+INSTALL_DIR="/var/www/ceo-ssh"
+LOG_FILE="/var/log/ceo-ssh-install.log"
+MYSQL_ROOT_PASS=""
+MYSQL_CEO_PASS=""
+JWT_SECRET=""
+ADMIN_USER=""
+ADMIN_PASS=""
+ADMIN_EMAIL=""
+
+# Banner
+banner() {
+    clear
+    echo -e "${CYAN}"
+    echo "   ██████╗███████╗ ██████╗     ███████╗███████╗██╗  ██╗"
+    echo "  ██╔════╝██╔════╝██╔═══██╗    ██╔════╝██╔════╝██║  ██║"
+    echo "  ██║     █████╗  ██║   ██║    ███████╗███████╗███████║"
+    echo "  ██║     ██╔══╝  ██║   ██║    ╚════██║╚════██║██╔══██║"
+    echo "  ╚██████╗███████╗╚██████╔╝    ███████║███████║██║  ██║"
+    echo "   ╚═════╝╚══════╝ ╚═════╝     ╚══════╝╚══════╝╚═╝  ╚═╝"
+    echo -e "${NC}"
+    echo -e "${GREEN}        PANEL DE CONTROL PROFESIONAL SSH${NC}"
+    echo -e "${YELLOW}                   Versión ${PANEL_VERSION}${NC}"
+    echo -e "${WHITE}        🚀 Instalación Automática Completa 🚀${NC}"
+    echo ""
+}
+
+# Log function
+log() {
+    echo -e "${BLUE}[$(date '+%Y-%m-%d %H:%M:%S')]${NC} $1" | tee -a $LOG_FILE
+}
+
+error() {
+    echo -e "${RED}❌ ERROR: $1${NC}" | tee -a $LOG_FILE
+    exit 1
+}
+
+success() {
+    echo -e "${GREEN}✅ $1${NC}" | tee -a $LOG_FILE
+}
+
+info() {
+    echo -e "${CYAN}ℹ️  $1${NC}" | tee -a $LOG_FILE
+}
+
+warning() {
+    echo -e "${YELLOW}⚠️  $1${NC}" | tee -a $LOG_FILE
+}
+
+# Check root
+check_root() {
+    if [ "$EUID" -ne 0 ]; then
+        error "Por favor ejecuta como root (sudo ./install.sh)"
+    fi
+    success "Root verificados"
+}
+
+# Check OS
+check_os() {
+    if [ -f /etc/os-release ]; then
+        . /etc/os-release
+        OS=$ID
+        VERSION=$VERSION_ID
+        
+        if [[ "$OS" == "ubuntu" ]] || [[ "$OS" == "debian" ]]; then
+            success "Sistema operativo compatible: $OS $VERSION"
+        else
+            error "Sistema no soportado. Usa Ubuntu o Debian"
+        fi
+    else
+        error "No se pudo detectar el sistema operativo"
+    fi
+}
+
+# Solicitar datos de configuración
+ask_config() {
+    echo ""
+    echo -e "${PURPLE}════════════════════════════════════════════════════${NC}"
+    echo -e "${WHITE}       CONFIGURACIÓN DEL PANEL CEO SSH${NC}"
+    echo -e "${PURPLE}════════════════════════════════════════════════════${NC}"
+    echo ""
+    
+    read -p "$(echo -e ${CYAN}👤 Usuario administrador: ${NC})" ADMIN_USER
+    while [[ -z "$ADMIN_USER" ]]; do
+        read -p "$(echo -e ${RED}⚠️ Usuario requerido: ${NC})" ADMIN_USER
+    done
+    
+    read -p "$(echo -e ${CYAN}📧 Email administrador: ${NC})" ADMIN_EMAIL
+    while [[ -z "$ADMIN_EMAIL" ]]; do
+        read -p "$(echo -e ${RED}⚠️ Email requerido: ${NC})" ADMIN_EMAIL
+    done
+    
+    read -s -p "$(echo -e ${CYAN}🔑 Contraseña administrador: ${NC})" ADMIN_PASS
+    echo ""
+    while [[ ${#ADMIN_PASS} -lt 6 ]]; do
+        read -s -p "$(echo -e ${RED}⚠️ Mínimo 6 caracteres: ${NC})" ADMIN_PASS
+        echo ""
+    done
+    
+    read -s -p "$(echo -e ${CYAN}✅ Confirmar contraseña: ${NC})" ADMIN_PASS_CONFIRM
+    echo ""
+    if [[ "$ADMIN_PASS" != "$ADMIN_PASS_CONFIRM" ]]; then
+        error "Las contraseñas no coinciden"
+    fi
+    
+    read -p "$(echo -e ${CYAN}🌐 Puerto del panel [80]: ${NC})" PANEL_PORT_INPUT
+    PANEL_PORT=${PANEL_PORT_INPUT:-80}
+    
+    echo ""
+    success "Configuración guardada"
+}
+
+# Generar contraseñas aleatorias
+generate_passwords() {
+    MYSQL_ROOT_PASS=$(openssl rand -base64 16)
+    MYSQL_CEO_PASS=$(openssl rand -base64 16)
+    JWT_SECRET=$(openssl rand -base64 32)
+}
+
+# Detener servicios que usan puerto 80
+stop_services() {
+    info "Verificando servicios en puerto 80..."
+    
+    if systemctl is-active --quiet apache2; then
+        warning "Apache está corriendo en puerto 80, deteniendo..."
+        systemctl stop apache2
+        systemctl disable apache2
+        success "Apache detenido y deshabilitado"
+    fi
+    
+    if systemctl is-active --quiet nginx; then
+        warning "Nginx está corriendo en puerto 80, deteniendo..."
+        systemctl stop nginx
+        systemctl disable nginx
+        success "Nginx detenido y deshabilitado"
+    fi
+    
+    PID=$(lsof -ti:80 2>/dev/null || true)
+    if [ ! -z "$PID" ]; then
+        warning "Matando procesos en puerto 80..."
+        kill -9 $PID 2>/dev/null || true
+        success "Procesos terminados"
+    fi
+    
+    success "Puerto 80 liberado"
+}
+
+# Instalar dependencias del sistema
+install_dependencies() {
+    info "Instalando dependencias del sistema..."
+    
+    apt-get update -y
+    
+    apt-get install -y \
+        curl \
+        wget \
+        git \
+        unzip \
+        zip \
+        tar \
+        software-properties-common \
+        apt-transport-https \
+        ca-certificates \
+        gnupg \
+        lsb-release \
+        net-tools \
+        lsof \
+        ufw \
+        fail2ban \
+        build-essential \
+        nginx \
+        mariadb-server \
+        mariadb-client
+    
+    success "Dependencias básicas instaladas"
+}
+
+# Instalar PHP 8.2
+install_php() {
+    info "Instalando PHP 8.2..."
+    
+    add-apt-repository ppa:ondrej/php -y
+    apt-get update -y
+    
+    apt-get install -y \
+        php8.2 \
+        php8.2-cli \
+        php8.2-fpm \
+        php8.2-mysql \
+        php8.2-mysqli \
+        php8.2-pdo \
+        php8.2-curl \
+        php8.2-json \
+        php8.2-mbstring \
+        php8.2-xml \
+        php8.2-zip \
+        php8.2-gd \
+        php8.2-bcmath \
+        php8.2-tokenizer
+    
+    sed -i 's/upload_max_filesize = 2M/upload_max_filesize = 100M/' /etc/php/8.2/fpm/php.ini
+    sed -i 's/post_max_size = 8M/post_max_size = 100M/' /etc/php/8.2/fpm/php.ini
+    sed -i 's/memory_limit = 128M/memory_limit = 512M/' /etc/php/8.2/fpm/php.ini
+    sed -i 's/max_execution_time = 30/max_execution_time = 300/' /etc/php/8.2/fpm/php.ini
+    
+    systemctl enable php8.2-fpm
+    systemctl start php8.2-fpm
+    
+    success "PHP 8.2 instalado"
+}
+
+# Instalar Node.js
+install_nodejs() {
+    info "Instalando Node.js 20 LTS..."
+    
+    curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+    apt-get install -y nodejs
+    
+    npm install -g pm2
+    
+    success "Node.js 20 y PM2 instalados"
+}
+
+# Configurar MySQL
+configure_mysql() {
+    info "Configurando MySQL..."
+    
+    systemctl enable mariadb
+    systemctl start mariadb
+    
+    mysql -e "SET PASSWORD FOR 'root'@'localhost' = PASSWORD('$MYSQL_ROOT_PASS');" 2>/dev/null || true
+    mysql -e "DELETE FROM mysql.user WHERE User='';" 2>/dev/null || true
+    mysql -e "DELETE FROM mysql.user WHERE User='root' AND Host NOT IN ('localhost', '127.0.0.1', '::1');" 2>/dev/null || true
+    mysql -e "DROP DATABASE IF EXISTS test;" 2>/dev/null || true
+    mysql -e "DELETE FROM mysql.db WHERE Db='test' OR Db='test\\_%';" 2>/dev/null || true
+    mysql -e "FLUSH PRIVILEGES;" 2>/dev/null || true
+    
+    mysql -u root -p$MYSQL_ROOT_PASS -e "CREATE DATABASE IF NOT EXISTS ceo_ssh CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;" 2>/dev/null
+    mysql -u root -p$MYSQL_ROOT_PASS -e "CREATE USER IF NOT EXISTS 'ceo_ssh'@'localhost' IDENTIFIED BY '$MYSQL_CEO_PASS';" 2>/dev/null
+    mysql -u root -p$MYSQL_ROOT_PASS -e "GRANT ALL PRIVILEGES ON ceo_ssh.* TO 'ceo_ssh'@'localhost';" 2>/dev/null
+    mysql -u root -p$MYSQL_ROOT_PASS -e "FLUSH PRIVILEGES;" 2>/dev/null
+    
+    success "MySQL configurado"
+}
+
+# Crear estructura de directorios
+create_directories() {
+    info "Creando estructura de directorios..."
+    
+    mkdir -p $INSTALL_DIR
+    mkdir -p $INSTALL_DIR/backend/middleware
+    mkdir -p $INSTALL_DIR/frontend/pages/api
+    mkdir -p $INSTALL_DIR/frontend/components/Layout
+    mkdir -p $INSTALL_DIR/frontend/components/UI
+    mkdir -p $INSTALL_DIR/frontend/components/Forms
+    mkdir -p $INSTALL_DIR/frontend/context
+    mkdir -p $INSTALL_DIR/frontend/hooks
+    mkdir -p $INSTALL_DIR/frontend/styles
+    mkdir -p $INSTALL_DIR/frontend/utils
+    mkdir -p $INSTALL_DIR/frontend/public/images
+    mkdir -p $INSTALL_DIR/frontend/public/fonts
+    
+    success "Directorios creados"
+}
+
+# Crear archivos del backend
+create_backend_files() {
+    info "Creando archivos del backend..."
+    
+    # package.json
+    cat > $INSTALL_DIR/backend/package.json << 'EOF'
+{
+  "name": "ceo-ssh-backend",
+  "version": "1.0.0",
+  "description": "CEO SSH Panel Backend API",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "nodemon server.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "mysql2": "^3.6.0",
+    "jsonwebtoken": "^9.0.2",
+    "bcryptjs": "^2.4.3",
+    "cors": "^2.8.5",
+    "helmet": "^7.0.0",
+    "express-rate-limit": "^6.9.0",
+    "socket.io": "^4.6.2",
+    "ws": "^8.13.0",
+    "dotenv": "^16.3.1",
+    "node-cron": "^3.0.2",
+    "express-validator": "^7.0.1",
+    "compression": "^1.7.4"
+  }
+}
+EOF
+
+    # db.js
+    cat > $INSTALL_DIR/backend/db.js << 'EOF'
+const mysql = require('mysql2/promise');
+
+const pool = mysql.createPool({
+    host: 'localhost',
+    user: 'ceo_ssh',
+    password: 'DB_PASS_PLACEHOLDER',
+    database: 'ceo_ssh',
+    waitForConnections: true,
+    connectionLimit: 10,
+    queueLimit: 0
+});
+
+async function query(sql, params = []) {
+    const [rows] = await pool.execute(sql, params);
+    return rows;
+}
+
+async function getUserByUsername(username) {
+    const users = await query('SELECT * FROM users WHERE username = ? LIMIT 1', [username]);
+    return users[0] || null;
+}
+
+async function getUserById(id) {
+    const users = await query('SELECT id, username, email, role, status, created_at, last_login FROM users WHERE id = ?', [id]);
+    return users[0] || null;
+}
+
+async function updateLastLogin(userId) {
+    return await query('UPDATE users SET last_login = NOW() WHERE id = ?', [userId]);
+}
+
+async function addLog(logData) {
+    const { user_id, action, details, ip_address } = logData;
+    return await query('INSERT INTO logs (user_id, action, details, ip_address) VALUES (?, ?, ?, ?)', [user_id, action, details, ip_address]);
+}
+
+async function getSSHTokens(filters = {}) {
+    let sql = 'SELECT * FROM ssh_tokens WHERE 1=1';
+    const params = [];
+    if (filters.status) {
+        sql += ' AND status = ?';
+        params.push(filters.status);
+    }
+    sql += ' ORDER BY created_at DESC';
+    return await query(sql, params);
+}
+
+async function createSSHToken(tokenData) {
+    const { username, password, expires_at, created_by } = tokenData;
+    return await query('INSERT INTO ssh_tokens (username, password, expires_at, created_by, status) VALUES (?, ?, ?, ?, "active")', [username, password, expires_at, created_by]);
+}
+
+async function deleteSSHToken(id) {
+    return await query('DELETE FROM ssh_tokens WHERE id = ?', [id]);
+}
+
+async function getSetting(key) {
+    const settings = await query('SELECT value FROM settings WHERE `key` = ? LIMIT 1', [key]);
+    return settings[0] ? settings[0].value : null;
+}
+
+module.exports = { query, getUserByUsername, getUserById, updateLastLogin, addLog, getSSHTokens, createSSHToken, deleteSSHToken, getSetting };
+EOF
+
+    # middleware/auth.js
+    cat > $INSTALL_DIR/backend/middleware/auth.js << 'EOF'
+const jwt = require('jsonwebtoken');
+const db = require('../db');
+
+const JWT_SECRET = 'JWT_SECRET_PLACEHOLDER';
+
+function verifyToken(token) {
+    try {
+        return jwt.verify(token, JWT_SECRET);
+    } catch (error) {
+        return null;
+    }
+}
+
+function generateToken(user) {
+    return jwt.sign({ id: user.id, username: user.username, role: user.role }, JWT_SECRET, { expiresIn: '24h' });
+}
+
+async function authenticate(req, res, next) {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+        return res.status(401).json({ success: false, error: 'No token provided' });
+    }
+    const token = authHeader.substring(7);
+    const decoded = verifyToken(token);
+    if (!decoded) {
+        return res.status(401).json({ success: false, error: 'Invalid or expired token' });
+    }
+    const user = await db.getUserById(decoded.id);
+    if (!user || user.status !== 'active') {
+        return res.status(401).json({ success: false, error: 'User not found or inactive' });
+    }
+    req.user = user;
+    next();
+}
+
+function requireAdmin(req, res, next) {
+    if (req.user.role !== 'admin') {
+        return res.status(403).json({ success: false, error: 'Admin access required' });
+    }
+    next();
+}
+
+module.exports = { authenticate, requireAdmin, generateToken, verifyToken };
+EOF
+
+    # middleware/rateLimit.js
+    cat > $INSTALL_DIR/backend/middleware/rateLimit.js << 'EOF'
+const rateLimit = require('express-rate-limit');
+
+const apiLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 100,
+    message: { success: false, error: 'Too many requests, please try again later.' }
+});
+
+const loginLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 5,
+    message: { success: false, error: 'Too many login attempts, please try again after 15 minutes.' }
+});
+
+module.exports = { apiLimiter, loginLimiter };
+EOF
+
+    # server.js
+    cat > $INSTALL_DIR/backend/server.js << 'EOF'
+const express = require('express');
+const cors = require('cors');
+const helmet = require('helmet');
+const compression = require('compression');
+const bcrypt = require('bcryptjs');
+const db = require('./db');
+const auth = require('./middleware/auth');
+const rateLimit = require('./middleware/rateLimit');
+
+const app = express();
+const PORT = 3001;
+
+app.use(helmet({ contentSecurityPolicy: false, crossOriginEmbedderPolicy: false }));
+app.use(compression());
+app.use(cors({ origin: true, credentials: true }));
+app.use(express.json({ limit: '10mb' }));
+
+app.get('/health', (req, res) => {
+    res.json({ status: 'healthy', timestamp: new Date().toISOString(), version: '1.0.0' });
+});
+
+app.get('/api/stats', auth.optionalAuth, async (req, res) => {
+    const { exec } = require('child_process');
+    const util = require('util');
+    const execPromise = util.promisify(exec);
+    
+    const totalUsersResult = await db.query('SELECT COUNT(*) as count FROM users');
+    const activeTokens = await db.query("SELECT COUNT(*) as count FROM ssh_tokens WHERE status = 'active' AND expires_at > NOW()");
+    
+    let onlineUsers = 0;
+    try {
+        const { stdout } = await execPromise("ps aux | grep -E 'sshd|dropbear' | grep -v grep | wc -l");
+        onlineUsers = parseInt(stdout.trim()) || 0;
+    } catch(e) {}
+    
+    res.json({ success: true, data: { total_users: totalUsersResult[0].count, active_tokens: activeTokens[0].count, online_users: onlineUsers } });
+});
+
+app.post('/api/auth/login', rateLimit.loginLimiter, async (req, res) => {
+    const { username, password } = req.body;
+    const user = await db.getUserByUsername(username);
+    if (!user || user.status !== 'active') {
+        return res.status(401).json({ success: false, error: 'Invalid credentials' });
+    }
+    const validPassword = await bcrypt.compare(password, user.password);
+    if (!validPassword) {
+        return res.status(401).json({ success: false, error: 'Invalid credentials' });
+    }
+    await db.updateLastLogin(user.id);
+    const token = auth.generateToken(user);
+    await db.addLog({ user_id: user.id, action: 'login', details: 'Successful login', ip_address: req.ip });
+    res.json({ success: true, data: { token, user: { id: user.id, username: user.username, email: user.email, role: user.role } } });
+});
+
+app.get('/api/auth/verify', auth.authenticate, async (req, res) => {
+    res.json({ success: true, data: { user: req.user, valid: true } });
+});
+
+app.post('/api/auth/logout', auth.authenticate, async (req, res) => {
+    await db.addLog({ user_id: req.user.id, action: 'logout', details: 'User logged out', ip_address: req.ip });
+    res.json({ success: true, message: 'Logged out successfully' });
+});
+
+app.get('/api/ssh-tokens', auth.authenticate, async (req, res) => {
+    const tokens = await db.getSSHTokens(req.query);
+    res.json({ success: true, data: tokens });
+});
+
+app.post('/api/ssh-tokens', auth.authenticate, async (req, res) => {
+    const { username, password, expires_at } = req.body;
+    const { exec } = require('child_process');
+    const util = require('util');
+    const execPromise = util.promisify(exec);
+    const expireDate = expires_at || new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+    await execPromise(`useradd -m -s /bin/false -e ${expireDate} ${username}`);
+    await execPromise(`echo "${username}:${password}" | chpasswd`);
+    await db.createSSHToken({ username, password, expires_at: expireDate, created_by: req.user.id });
+    await db.addLog({ user_id: req.user.id, action: 'create_ssh_token', details: `Created SSH token: ${username}`, ip_address: req.ip });
+    res.json({ success: true, message: 'SSH token created successfully', data: { username, password, expires_at: expireDate } });
+});
+
+app.delete('/api/ssh-tokens/:id', auth.authenticate, async (req, res) => {
+    const { id } = req.params;
+    const token = await db.query('SELECT * FROM ssh_tokens WHERE id = ?', [id]);
+    if (token.length === 0) return res.status(404).json({ success: false, error: 'Token not found' });
+    const { exec } = require('child_process');
+    const util = require('util');
+    const execPromise = util.promisify(exec);
+    await execPromise(`userdel -r -f ${token[0].username}`);
+    await db.deleteSSHToken(id);
+    await db.addLog({ user_id: req.user.id, action: 'delete_ssh_token', details: `Deleted SSH token: ${token[0].username}`, ip_address: req.ip });
+    res.json({ success: true, message: 'SSH token deleted successfully' });
+});
+
+app.listen(PORT, () => {
+    console.log(`CEO SSH API running on port ${PORT}`);
+});
+EOF
+
+    # Reemplazar placeholders
+    sed -i "s/DB_PASS_PLACEHOLDER/$MYSQL_CEO_PASS/g" $INSTALL_DIR/backend/db.js
+    sed -i "s/JWT_SECRET_PLACEHOLDER/$JWT_SECRET/g" $INSTALL_DIR/backend/middleware/auth.js
+    
+    success "Archivos del backend creados"
+}
+
+# Crear archivos del frontend
+create_frontend_files() {
+    info "Creando archivos del frontend..."
+    
+    # package.json
+    cat > $INSTALL_DIR/frontend/package.json << 'EOF'
+{
+  "name": "ceo-ssh-panel",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "export": "next export"
+  },
+  "dependencies": {
+    "next": "14.0.0",
+    "react": "18.2.0",
+    "react-dom": "18.2.0",
+    "axios": "^1.6.0",
+    "react-hot-toast": "^2.4.1",
+    "react-icons": "^4.12.0",
+    "chart.js": "^4.4.0",
+    "react-chartjs-2": "^5.2.0",
+    "date-fns": "^2.30.0"
+  },
+  "devDependencies": {
+    "autoprefixer": "^10.4.15",
+    "postcss": "^8.4.29",
+    "tailwindcss": "^3.3.3"
+  }
+}
+EOF
+
+    # next.config.js
+    cat > $INSTALL_DIR/frontend/next.config.js << 'EOF'
+/** @type {import('next').NextConfig} */
+const nextConfig = {
+  reactStrictMode: true,
+  swcMinify: true,
+  output: 'export',
+  trailingSlash: true,
+  env: {
+    NEXT_PUBLIC_API_URL: 'http://localhost/api',
+    NEXT_PUBLIC_PANEL_NAME: 'CEO SSH',
+    NEXT_PUBLIC_PANEL_VERSION: '1.0.0',
+  }
+}
+module.exports = nextConfig
+EOF
+
+    # tailwind.config.js
+    cat > $INSTALL_DIR/frontend/tailwind.config.js << 'EOF'
+/** @type {import('tailwindcss').Config} */
+module.exports = {
+  content: ['./pages/**/*.{js,ts,jsx,tsx,mdx}', './components/**/*.{js,ts,jsx,tsx,mdx}'],
+  darkMode: 'class',
+  theme: {
+    extend: {
+      colors: {
+        primary: { 500: '#0087ff', 600: '#006ccc' },
+        dark: { 100: '#1e1e2e', 200: '#181825', 300: '#11111b', 400: '#0a0a0f' }
+      }
+    }
+  },
+  plugins: []
+}
+EOF
+
+    # postcss.config.js
+    cat > $INSTALL_DIR/frontend/postcss.config.js << 'EOF'
+module.exports = {
+  plugins: {
+    tailwindcss: {},
+    autoprefixer: {},
+  }
+}
+EOF
+
+    # styles/globals.css
+    cat > $INSTALL_DIR/frontend/styles/globals.css << 'EOF'
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body { font-family: 'Inter', system-ui, sans-serif; background: #0a0a0f; color: #fff; }
+::-webkit-scrollbar { width: 8px; }
+::-webkit-scrollbar-track { background: #181825; }
+::-webkit-scrollbar-thumb { background: #3f3f46; border-radius: 4px; }
+EOF
+
+    # styles/themes.css
+    cat > $INSTALL_DIR/frontend/styles/themes.css << 'EOF'
+:root {
+  --bg-primary: #0a0a0f;
+  --bg-secondary: #11111b;
+  --text-primary: #ffffff;
+  --text-secondary: #a1a1aa;
+  --accent: #0087ff;
+}
+.light {
+  --bg-primary: #ffffff;
+  --bg-secondary: #f4f4f5;
+  --text-primary: #18181b;
+  --text-secondary: #3f3f46;
+  --accent: #0087ff;
+}
+EOF
+
+    # context/AuthContext.js
+    cat > $INSTALL_DIR/frontend/context/AuthContext.js << 'EOF'
+import { createContext, useContext, useState, useEffect } from 'react';
+import api from '../utils/api';
+
+const AuthContext = createContext({});
+
+export function AuthProvider({ children }) {
+  const [user, setUser] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => { checkAuth(); }, []);
+
+  const checkAuth = async () => {
+    const token = localStorage.getItem('token');
+    if (token) {
+      try {
+        const response = await api.get('/auth/verify');
+        if (response.success) setUser(response.data.user);
+        else localStorage.removeItem('token');
+      } catch(e) { localStorage.removeItem('token'); }
+    }
+    setLoading(false);
+  };
+
+  const login = async (username, password) => {
+    const response = await api.post('/auth/login', { username, password });
+    if (response.success) {
+      localStorage.setItem('token', response.data.token);
+      setUser(response.data.user);
+      return true;
+    }
+    throw new Error(response.error || 'Login failed');
+  };
+
+  const logout = async () => {
+    try { await api.post('/auth/logout'); } catch(e) {}
+    localStorage.removeItem('token');
+    setUser(null);
+  };
+
+  return <AuthContext.Provider value={{ user, loading, login, logout, isAuthenticated: !!user }}>{children}</AuthContext.Provider>;
+}
+
+export const useAuth = () => useContext(AuthContext);
+EOF
+
+    # utils/api.js
+    cat > $INSTALL_DIR/frontend/utils/api.js << 'EOF'
+import axios from 'axios';
+
+const api = axios.create({ baseURL: process.env.NEXT_PUBLIC_API_URL || 'http://localhost/api', headers: { 'Content-Type': 'application/json' } });
+
+api.interceptors.request.use((config) => {
+  const token = localStorage.getItem('token');
+  if (token) config.headers.Authorization = `Bearer ${token}`;
+  return config;
+});
+
+api.interceptors.response.use((response) => response.data, (error) => {
+  if (error.response?.status === 401) {
+    localStorage.removeItem('token');
+    window.location.href = '/login';
+  }
+  return Promise.reject(error);
+});
+
+export default api;
+EOF
+
+    # utils/helpers.js
+    cat > $INSTALL_DIR/frontend/utils/helpers.js << 'EOF'
+export const formatDate = (date) => {
+  if (!date || date === 'never') return 'Nunca';
+  return new Date(date).toLocaleDateString('es-ES', { year: 'numeric', month: 'long', day: 'numeric' });
+};
+
+export const getStatusColor = (status) => {
+  const colors = { active: 'text-green-500', expired: 'text-red-500', suspended: 'text-yellow-500' };
+  return colors[status] || 'text-gray-500';
+};
+
+export const getStatusText = (status) => {
+  const texts = { active: 'Activo', expired: 'Expirado', suspended: 'Suspendido' };
+  return texts[status] || 'Desconocido';
+};
+
+export const copyToClipboard = async (text) => {
+  try { await navigator.clipboard.writeText(text); return true; } catch(e) { return false; }
+};
+EOF
+
+    # pages/_app.js
+    cat > $INSTALL_DIR/frontend/pages/_app.js << 'EOF'
+import { AuthProvider } from '../context/AuthContext';
+import { Toaster } from 'react-hot-toast';
+import '../styles/globals.css';
+import '../styles/themes.css';
+
+function MyApp({ Component, pageProps }) {
+  return (
+    <AuthProvider>
+      <Toaster position="top-right" toastOptions={{ style: { background: '#1e1e2e', color: '#fff' } }} />
+      <Component {...pageProps} />
+    </AuthProvider>
+  );
+}
+export default MyApp;
+EOF
+
+    # pages/_document.js
+    cat > $INSTALL_DIR/frontend/pages/_document.js << 'EOF'
+import { Html, Head, Main, NextScript } from 'next/document';
+export default function Document() {
+  return (
+    <Html lang="es">
+      <Head>
+        <link href="https://fonts.googleapis.com/css2?family=Inter:wght@100..900&display=swap" rel="stylesheet" />
+      </Head>
+      <body>
+        <Main />
+        <NextScript />
+      </body>
+    </Html>
+  );
+}
+EOF
+
+    # pages/index.js
+    cat > $INSTALL_DIR/frontend/pages/index.js << 'EOF'
+import { useEffect } from 'react';
+import { useRouter } from 'next/router';
+import { useAuth } from '../context/AuthContext';
+
+export default function Home() {
+  const { isAuthenticated } = useAuth();
+  const router = useRouter();
+  useEffect(() => {
+    router.push(isAuthenticated ? '/dashboard' : '/login');
+  }, [isAuthenticated]);
+  return <div className="min-h-screen flex items-center justify-center"><div className="w-8 h-8 border-2 border-primary-500 border-t-transparent rounded-full animate-spin"></div></div>;
+}
+EOF
+
+    # pages/login.js
+    cat > $INSTALL_DIR/frontend/pages/login.js << 'EOF'
+import { useState } from 'react';
+import { useRouter } from 'next/router';
+import { useAuth } from '../context/AuthContext';
+import toast from 'react-hot-toast';
+import { FiUser, FiLock, FiEye, FiEyeOff, FiShield } from 'react-icons/fi';
+
+export default function Login() {
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const { login, isAuthenticated } = useAuth();
+  const router = useRouter();
+
+  if (isAuthenticated) { router.push('/dashboard'); return null; }
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    if (!username || !password) { toast.error('Ingresa usuario y contraseña'); return; }
+    setLoading(true);
+    try {
+      await login(username, password);
+      toast.success('Bienvenido a CEO SSH Panel');
+      router.push('/dashboard');
+    } catch (error) {
+      toast.error(error.message || 'Credenciales inválidas');
+    } finally { setLoading(false); }
+  };
+
+  return (
+    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-dark-400 via-dark-300 to-dark-400">
+      <div className="absolute inset-0 overflow-hidden">
+        <div className="absolute -top-40 -right-40 w-80 h-80 bg-primary-500 rounded-full filter blur-3xl opacity-20 animate-pulse"></div>
+      </div>
+      <div className="relative z-10 w-full max-w-md px-6">
+        <div className="text-center mb-8">
+          <div className="inline-flex items-center justify-center w-20 h-20 bg-gradient-to-br from-primary-500 to-primary-600 rounded-2xl shadow-lg mb-4">
+            <FiShield className="w-10 h-10 text-white" />
+          </div>
+          <h1 className="text-3xl font-bold bg-gradient-to-r from-primary-400 to-primary-600 bg-clip-text text-transparent">CEO SSH</h1>
+          <p className="text-gray-400 mt-2">Panel de Control Profesional</p>
+        </div>
+        <div className="bg-dark-100/80 backdrop-blur-xl rounded-2xl shadow-2xl p-8 border border-gray-700">
+          <form onSubmit={handleSubmit} className="space-y-6">
+            <div>
+              <label className="block text-sm font-medium text-gray-300 mb-2">Usuario</label>
+              <div className="relative">
+                <FiUser className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
+                <input type="text" value={username} onChange={(e) => setUsername(e.target.value)} className="w-full pl-10 pr-3 py-2 bg-dark-200 border border-gray-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-primary-500" placeholder="Ingresa tu usuario" disabled={loading} />
+              </div>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-300 mb-2">Contraseña</label>
+              <div className="relative">
+                <FiLock className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
+                <input type={showPassword ? 'text' : 'password'} value={password} onChange={(e) => setPassword(e.target.value)} className="w-full pl-10 pr-10 py-2 bg-dark-200 border border-gray-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-primary-500" placeholder="Ingresa tu contraseña" disabled={loading} />
+                <button type="button" onClick={() => setShowPassword(!showPassword)} className="absolute right-3 top-1/2 transform -translate-y-1/2">
+                  {showPassword ? <FiEyeOff className="text-gray-400" /> : <FiEye className="text-gray-400" />}
+                </button>
+              </div>
+            </div>
+            <button type="submit" disabled={loading} className="w-full py-2 bg-gradient-to-r from-primary-500 to-primary-600 rounded-lg text-white font-medium hover:from-primary-600 hover:to-primary-700 transition-all disabled:opacity-50">
+              {loading ? <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin mx-auto"></div> : 'Iniciar Sesión'}
+            </button>
+          </form>
+        </div>
+      </div>
+    </div>
+  );
+}
+EOF
+
+    # pages/dashboard.js
+    cat > $INSTALL_DIR/frontend/pages/dashboard.js << 'EOF'
+import { useState, useEffect } from 'react';
+import { useAuth } from '../context/AuthContext';
+import MainLayout from '../components/Layout/MainLayout';
+import StatsCard from '../components/UI/StatsCard';
+import { FiUsers, FiUserCheck, FiActivity, FiCpu, FiHardDrive } from 'react-icons/fi';
+import api from '../utils/api';
+
+export default function Dashboard() {
+  const { user } = useAuth();
+  const [stats, setStats] = useState({ total_users: 0, active_tokens: 0, online_users: 0, server_load: 0, disk_usage: 0 });
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    fetchStats();
+    const interval = setInterval(fetchStats, 30000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const fetchStats = async () => {
+    try {
+      const response = await api.get('/stats');
+      if (response.success) setStats(response.data);
+    } catch(e) {}
+    finally { setLoading(false); }
+  };
+
+  if (loading) return <MainLayout><div className="flex justify-center py-12"><div className="w-8 h-8 border-2 border-primary-500 border-t-transparent rounded-full animate-spin"></div></div></MainLayout>;
+
+  return (
+    <MainLayout>
+      <div className="mb-8"><h1 className="text-2xl font-bold text-white mb-2">Bienvenido, {user?.username}</h1><p className="text-gray-400">Panel de control de CEO SSH</p></div>
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+        <StatsCard title="Total Usuarios" value={stats.total_users} icon={FiUsers} color="from-blue-500 to-blue-600" />
+        <StatsCard title="Tokens Activos" value={stats.active_tokens} icon={FiUserCheck} color="from-green-500 to-green-600" />
+        <StatsCard title="Usuarios Online" value={stats.online_users} icon={FiActivity} color="from-purple-500 to-purple-600" />
+        <StatsCard title="Carga Servidor" value={stats.server_load} icon={FiCpu} color="from-yellow-500 to-yellow-600" suffix=" avg" decimals={2} />
+      </div>
+    </MainLayout>
+  );
+}
+EOF
+
+    # pages/users.js
+    cat > $INSTALL_DIR/frontend/pages/users.js << 'EOF'
+import { useState, useEffect } from 'react';
+import MainLayout from '../components/Layout/MainLayout';
+import UsersTable from '../components/UI/UsersTable';
+import Modal from '../components/UI/Modal';
+import toast from 'react-hot-toast';
+import { FiPlus, FiSearch } from 'react-icons/fi';
+import api from '../utils/api';
+
+export default function Users() {
+  const [users, setUsers] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [showModal, setShowModal] = useState(false);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [newUser, setNewUser] = useState({ username: '', password: '', days: 30 });
+
+  useEffect(() => { fetchUsers(); }, []);
+
+  const fetchUsers = async () => {
+    try {
+      const response = await api.get('/ssh-tokens');
+      if (response.success) setUsers(response.data);
+    } catch(e) { toast.error('Error al cargar usuarios'); }
+    finally { setLoading(false); }
+  };
+
+  const handleCreate = async () => {
+    if (!newUser.username || !newUser.password) { toast.error('Usuario y contraseña requeridos'); return; }
+    try {
+      const response = await api.post('/ssh-tokens', newUser);
+      if (response.success) {
+        toast.success(`Usuario ${newUser.username} creado`);
+        setShowModal(false);
+        setNewUser({ username: '', password: '', days: 30 });
+        fetchUsers();
+      }
+    } catch(e) { toast.error('Error al crear usuario'); }
+  };
+
+  const handleDelete = async (id, username) => {
+    if (confirm(`¿Eliminar usuario ${username}?`)) {
+      try {
+        await api.delete(`/ssh-tokens/${id}`);
+        toast.success('Usuario eliminado');
+        fetchUsers();
+      } catch(e) { toast.error('Error al eliminar'); }
+    }
+  };
+
+  const filteredUsers = users.filter(u => u.username.toLowerCase().includes(searchTerm.toLowerCase()));
+
+  return (
+    <MainLayout>
+      <div className="flex justify-between items-center mb-6">
+        <div><h1 className="text-2xl font-bold text-white">Gestión de Usuarios</h1><p className="text-gray-400">Administra todos los tokens SSH</p></div>
+        <button onClick={() => setShowModal(true)} className="flex items-center px-4 py-2 bg-primary-500 rounded-lg text-white"><FiPlus className="mr-2" />Crear Usuario</button>
+      </div>
+      <div className="mb-6 relative">
+        <FiSearch className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
+        <input type="text" placeholder="Buscar usuario..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="w-full pl-10 pr-3 py-2 bg-dark-100 border border-gray-700 rounded-lg text-white" />
+      </div>
+      <UsersTable users={filteredUsers} loading={loading} onDelete={handleDelete} />
+      <Modal isOpen={showModal} onClose={() => setShowModal(false)} title="Crear Usuario">
+        <input type="text" placeholder="Usuario" value={newUser.username} onChange={(e) => setNewUser({...newUser, username: e.target.value})} className="w-full mb-3 px-3 py-2 bg-dark-200 border border-gray-600 rounded-lg text-white" />
+        <input type="text" placeholder="Contraseña" value={newUser.password} onChange={(e) => setNewUser({...newUser, password: e.target.value})} className="w-full mb-3 px-3 py-2 bg-dark-200 border border-gray-600 rounded-lg text-white" />
+        <select value={newUser.days} onChange={(e) => setNewUser({...newUser, days: parseInt(e.target.value)})} className="w-full mb-4 px-3 py-2 bg-dark-200 border border-gray-600 rounded-lg text-white">
+          <option value="7">7 días</option><option value="15">15 días</option><option value="30">30 días</option><option value="60">60 días</option><option value="90">90 días</option>
+        </select>
+        <button onClick={handleCreate} className="w-full py-2 bg-primary-500 rounded-lg text-white">Crear Usuario</button>
+      </Modal>
+    </MainLayout>
+  );
+}
+EOF
+
+    # components/Layout/MainLayout.js
+    cat > $INSTALL_DIR/frontend/components/Layout/MainLayout.js << 'EOF'
+import { useState } from 'react';
+import Sidebar from './Sidebar';
+import Header from './Header';
+import { Toaster } from 'react-hot-toast';
+
+export default function MainLayout({ children }) {
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+  return (
+    <div className="min-h-screen bg-dark-300">
+      <Sidebar isOpen={sidebarOpen} setIsOpen={setSidebarOpen} />
+      <div className={`transition-all duration-300 ${sidebarOpen ? 'ml-64' : 'ml-20'}`}>
+        <Header sidebarOpen={sidebarOpen} setSidebarOpen={setSidebarOpen} />
+        <main className="p-6">{children}</main>
+      </div>
+    </div>
+  );
+}
+EOF
+
+    # components/Layout/Sidebar.js
+    cat > $INSTALL_DIR/frontend/components/Layout/Sidebar.js << 'EOF'
+import Link from 'next/link';
+import { useRouter } from 'next/router';
+import { FiGrid, FiUsers, FiActivity, FiUser, FiLogOut, FiShield, FiChevronLeft, FiChevronRight } from 'react-icons/fi';
+import { useAuth } from '../../context/AuthContext';
+
+const menuItems = [
+  { path: '/dashboard', name: 'Dashboard', icon: FiGrid },
+  { path: '/users', name: 'Usuarios', icon: FiUsers },
+  { path: '/profile', name: 'Perfil', icon: FiUser },
+];
+
+export default function Sidebar({ isOpen, setIsOpen }) {
+  const router = useRouter();
+  const { logout } = useAuth();
+
+  return (
+    <aside className={`fixed left-0 top-0 h-full bg-dark-100 border-r border-gray-700 transition-all duration-300 z-20 ${isOpen ? 'w-64' : 'w-20'}`}>
+      <div className="flex items-center justify-between h-16 px-4 border-b border-gray-700">
+        {isOpen ? <div className="flex items-center space-x-2"><FiShield className="w-8 h-8 text-primary-500" /><span className="text-white font-bold">CEO SSH</span></div> : <FiShield className="w-8 h-8 text-primary-500 mx-auto" />}
+        <button onClick={() => setIsOpen(!isOpen)} className="p-1 rounded-lg hover:bg-dark-200">{isOpen ? <FiChevronLeft className="text-gray-400" /> : <FiChevronRight className="text-gray-400" />}</button>
+      </div>
+      <nav className="mt-6 px-2">
+        {menuItems.map((item) => {
+          const isActive = router.pathname === item.path;
+          return (
+            <Link key={item.path} href={item.path}>
+              <div className={`flex items-center px-3 py-2 mb-1 rounded-lg cursor-pointer transition-all ${isActive ? 'bg-primary-500/20 text-primary-500' : 'text-gray-400 hover:bg-dark-200 hover:text-white'}`}>
+                <item.icon className={`w-5 h-5 ${isOpen ? 'mr-3' : 'mx-auto'}`} />
+                {isOpen && <span className="text-sm">{item.name}</span>}
+              </div>
+            </Link>
+          );
+        })}
+      </nav>
+      <div className="absolute bottom-0 left-0 right-0 p-4 border-t border-gray-700">
+        <button onClick={logout} className={`flex items-center w-full px-3 py-2 rounded-lg text-red-400 hover:bg-red-500/10 ${!isOpen && 'justify-center'}`}>
+          <FiLogOut className="w-5 h-5" />
+          {isOpen && <span className="ml-3 text-sm">Cerrar Sesión</span>}
+        </button>
+      </div>
+    </aside>
+  );
+}
+EOF
+
+    # components/Layout/Header.js
+    cat > $INSTALL_DIR/frontend/components/Layout/Header.js << 'EOF'
+import { useAuth } from '../../context/AuthContext';
+import { FiMenu, FiBell } from 'react-icons/fi';
+
+export default function Header({ sidebarOpen, setSidebarOpen }) {
+  const { user } = useAuth();
+  return (
+    <header className="bg-dark-100 border-b border-gray-700 h-16 flex items-center justify-between px-6">
+      <button onClick={() => setSidebarOpen(!sidebarOpen)} className="p-2 rounded-lg hover:bg-dark-200 lg:hidden"><FiMenu className="text-gray-400" /></button>
+      <div className="flex items-center space-x-4">
+        <button className="p-2 rounded-lg hover:bg-dark-200 relative"><FiBell className="text-gray-400" /><span className="absolute top-1 right-1 w-2 h-2 bg-red-500 rounded-full"></span></button>
+        <div className="flex items-center space-x-3">
+          <div className="text-right hidden sm:block"><p className="text-white text-sm">{user?.username}</p><p className="text-gray-400 text-xs">{user?.role === 'admin' ? 'Admin' : 'User'}</p></div>
+          <div className="w-8 h-8 bg-primary-500 rounded-full flex items-center justify-center"><span className="text-white text-sm font-bold">{user?.username?.charAt(0).toUpperCase()}</span></div>
+        </div>
+      </div>
+    </header>
+  );
+}
+EOF
+
+    # components/UI/StatsCard.js
+    cat > $INSTALL_DIR/frontend/components/UI/StatsCard.js << 'EOF'
+export default function StatsCard({ title, value, icon: Icon, color, suffix = '', decimals = 0 }) {
+  const formattedValue = decimals > 0 ? Number(value).toFixed(decimals) : value;
+  return (
+    <div className="bg-dark-100 rounded-xl p-6 border border-gray-700 hover:border-primary-500/50 transition-all">
+      <div className={`p-3 bg-gradient-to-br ${color} rounded-lg bg-opacity-10 inline-block mb-4`}><Icon className="w-6 h-6 text-white" /></div>
+      <h3 className="text-gray-400 text-sm mb-1">{title}</h3>
+      <p className="text-2xl font-bold text-white">{formattedValue}{suffix}</p>
+    </div>
+  );
+}
+EOF
+
+    # components/UI/UsersTable.js
+    cat > $INSTALL_DIR/frontend/components/UI/UsersTable.js << 'EOF'
+import { formatDate, getStatusColor, getStatusText } from '../../utils/helpers';
+import { FiTrash2 } from 'react-icons/fi';
+
+export default function UsersTable({ users, loading, onDelete }) {
+  if (loading) return <div className="text-center py-8 text-gray-400">Cargando...</div>;
+  if (users.length === 0) return <div className="text-center py-8 text-gray-400">No hay usuarios</div>;
+  return (
+    <div className="bg-dark-100 rounded-xl border border-gray-700 overflow-hidden">
+      <table className="w-full">
+        <thead className="bg-dark-200 border-b border-gray-700">
+          <tr><th className="px-6 py-3 text-left text-xs text-gray-400">Usuario</th><th className="px-6 py-3 text-left text-xs text-gray-400">Expiración</th><th className="px-6 py-3 text-left text-xs text-gray-400">Estado</th><th className="px-6 py-3 text-right text-xs text-gray-400">Acciones</th></tr>
+        </thead>
+        <tbody className="divide-y divide-gray-700">
+          {users.map((user) => (
+            <tr key={user.id} className="hover:bg-dark-200/50">
+              <td className="px-6 py-4"><div className="text-sm text-white">{user.username}</div></td>
+              <td className="px-6 py-4"><div className="text-sm text-gray-300">{formatDate(user.expires_at)}</div></td>
+              <td className="px-6 py-4"><span className={`text-xs px-2 py-1 rounded-full ${getStatusColor(user.status)} bg-opacity-10 bg-current`}>{getStatusText(user.status)}</span></td>
+              <td className="px-6 py-4 text-right"><button onClick={() => onDelete(user.id, user.username)} className="p-2 text-red-400 hover:bg-red-500/10 rounded-lg"><FiTrash2 /></button></td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+EOF
+
+    # components/UI/Modal.js
+    cat > $INSTALL_DIR/frontend/components/UI/Modal.js << 'EOF'
+import { useEffect } from 'react';
+import { FiX } from 'react-icons/fi';
+
+export default function Modal({ isOpen, onClose, title, children }) {
+  useEffect(() => { document.body.style.overflow = isOpen ? 'hidden' : 'unset'; return () => { document.body.style.overflow = 'unset'; }; }, [isOpen]);
+  if (!isOpen) return null;
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center">
+      <div className="fixed inset-0 bg-black bg-opacity-75" onClick={onClose}></div>
+      <div className="relative bg-dark-100 rounded-2xl w-full max-w-md p-6">
+        <div className="flex justify-between items-center mb-4"><h3 className="text-lg font-semibold text-white">{title}</h3><button onClick={onClose} className="p-1 rounded-lg hover:bg-dark-200"><FiX className="text-gray-400" /></button></div>
+        {children}
+      </div>
+    </div>
+  );
+}
+EOF
+
+    # pages/profile.js
+    cat > $INSTALL_DIR/frontend/pages/profile.js << 'EOF'
+import { useState } from 'react';
+import MainLayout from '../components/Layout/MainLayout';
+import { useAuth } from '../context/AuthContext';
+import api from '../utils/api';
+import toast from 'react-hot-toast';
+import { FiUser, FiMail, FiShield, FiSave } from 'react-icons/fi';
+
+export default function Profile() {
+  const { user } = useAuth();
+  const [loading, setLoading] = useState(false);
+  const [passwordData, setPasswordData] = useState({ current_password: '', new_password: '', confirm_password: '' });
+
+  const handlePasswordChange = async (e) => {
+    e.preventDefault();
+    if (passwordData.new_password !== passwordData.confirm_password) { toast.error('Las contraseñas no coinciden'); return; }
+    if (passwordData.new_password.length < 6) { toast.error('Mínimo 6 caracteres'); return; }
+    setLoading(true);
+    try {
+      await api.post('/change-password', { current_password: passwordData.current_password, new_password: passwordData.new_password });
+      toast.success('Contraseña actualizada');
+      setPasswordData({ current_password: '', new_password: '', confirm_password: '' });
+    } catch(e) { toast.error('Error al cambiar contraseña'); }
+    finally { setLoading(false); }
+  };
+
+  return (
+    <MainLayout>
+      <div className="mb-8"><h1 className="text-2xl font-bold text-white mb-2">Mi Perfil</h1><p className="text-gray-400">Gestiona tu información personal</p></div>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div className="bg-dark-100 rounded-xl p-6 border border-gray-700">
+          <h2 className="text-lg font-semibold text-white mb-4">Información</h2>
+          <div className="space-y-4">
+            <div className="flex items-center space-x-3 p-3 bg-dark-200 rounded-lg"><FiUser className="text-primary-500" /><div><p className="text-xs text-gray-500">Usuario</p><p className="text-white">{user?.username}</p></div></div>
+            <div className="flex items-center space-x-3 p-3 bg-dark-200 rounded-lg"><FiMail className="text-primary-500" /><div><p className="text-xs text-gray-500">Email</p><p className="text-white">{user?.email || 'No especificado'}</p></div></div>
+            <div className="flex items-center space-x-3 p-3 bg-dark-200 rounded-lg"><FiShield className="text-primary-500" /><div><p className="text-xs text-gray-500">Rol</p><p className="text-white capitalize">{user?.role}</p></div></div>
+          </div>
+        </div>
+        <div className="bg-dark-100 rounded-xl p-6 border border-gray-700">
+          <h2 className="text-lg font-semibold text-white mb-4">Cambiar Contraseña</h2>
+          <form onSubmit={handlePasswordChange} className="space-y-4">
+            <input type="password" placeholder="Contraseña actual" value={passwordData.current_password} onChange={(e) => setPasswordData({...passwordData, current_password: e.target.value})} className="w-full px-3 py-2 bg-dark-200 border border-gray-600 rounded-lg text-white" required />
+            <input type="password" placeholder="Nueva contraseña" value={passwordData.new_password} onChange={(e) => setPasswordData({...passwordData, new_password: e.target.value})} className="w-full px-3 py-2 bg-dark-200 border border-gray-600 rounded-lg text-white" required />
+            <input type="password" placeholder="Confirmar contraseña" value={passwordData.confirm_password} onChange={(e) => setPasswordData({...passwordData, confirm_password: e.target.value})} className="w-full px-3 py-2 bg-dark-200 border border-gray-600 rounded-lg text-white" required />
+            <button type="submit" disabled={loading} className="w-full flex items-center justify-center py-2 bg-primary-500 rounded-lg text-white"><FiSave className="mr-2" />Actualizar</button>
+          </form>
+        </div>
+      </div>
+    </MainLayout>
+  );
+}
+EOF
+
+    success "Archivos del frontend creados"
+}
+
+# Configurar base de datos
+setup_database() {
+    info "Configurando base de datos..."
+    
+    ADMIN_HASH=$(node -e "const bcrypt = require('bcryptjs'); bcrypt.hash('$ADMIN_PASS', 10).then(h => console.log(h));")
+    
+    mysql -u root -p$MYSQL_ROOT_PASS ceo_ssh << EOF
+CREATE TABLE IF NOT EXISTS users (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    username VARCHAR(50) UNIQUE NOT NULL,
+    password VARCHAR(255) NOT NULL,
+    email VARCHAR(100),
+    role ENUM('admin', 'user') DEFAULT 'user',
+    status ENUM('active', 'inactive', 'suspended') DEFAULT 'active',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    last_login TIMESTAMP NULL
+);
+
+CREATE TABLE IF NOT EXISTS ssh_tokens (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    username VARCHAR(50) UNIQUE NOT NULL,
+    password VARCHAR(255) NOT NULL,
+    expires_at DATE NOT NULL,
+    status ENUM('active', 'expired', 'suspended') DEFAULT 'active',
+    traffic_limit BIGINT DEFAULT NULL,
+    traffic_used BIGINT DEFAULT 0,
+    created_by INT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    FOREIGN KEY (created_by) REFERENCES users(id)
+);
+
+CREATE TABLE IF NOT EXISTS logs (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    user_id INT,
+    action VARCHAR(100),
+    details TEXT,
+    ip_address VARCHAR(45),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
+);
+
+CREATE TABLE IF NOT EXISTS settings (
+    \`key\` VARCHAR(100) PRIMARY KEY,
+    \`value\` TEXT,
+    description TEXT,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
+
+INSERT INTO users (username, password, email, role, status) 
+VALUES ('$ADMIN_USER', '$ADMIN_HASH', '$ADMIN_EMAIL', 'admin', 'active')
+ON DUPLICATE KEY UPDATE password = '$ADMIN_HASH';
+
+INSERT INTO settings (\`key\`, \`value\`, description) VALUES
+('panel_name', '$PANEL_NAME', 'Nombre del panel'),
+('panel_version', '$PANEL_VERSION', 'Versión del panel'),
+('maintenance_mode', '0', 'Modo mantenimiento')
+ON DUPLICATE KEY UPDATE \`value\` = VALUES(\`value\`);
+EOF
+    
+    success "Base de datos configurada"
+}
+
+# Configurar Nginx
+configure_nginx() {
+    info "Configurando Nginx..."
+    
+    cat > /etc/nginx/sites-available/ceo-ssh << EOF
+server {
+    listen $PANEL_PORT;
+    listen [::]:$PANEL_PORT;
+    server_name _;
+    
+    root $INSTALL_DIR/frontend/out;
+    index index.html;
+    
+    location / {
+        try_files \$uri \$uri/ /index.html;
+    }
+    
+    location /api {
+        proxy_pass http://localhost:$API_PORT;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host \$host;
+        proxy_cache_bypass \$http_upgrade;
+    }
+}
+EOF
+    
+    ln -sf /etc/nginx/sites-available/ceo-ssh /etc/nginx/sites-enabled/
+    rm -f /etc/nginx/sites-enabled/default
+    nginx -t
+    systemctl restart nginx
+    
+    success "Nginx configurado"
+}
+
+# Configurar servicios systemd
+configure_services() {
+    info "Configurando servicios..."
+    
+    cat > /etc/systemd/system/ceo-ssh-api.service << EOF
+[Unit]
+Description=CEO SSH API Service
+After=network.target mysql.service
+
+[Service]
+Type=simple
+User=www-data
+WorkingDirectory=$INSTALL_DIR/backend
+ExecStart=/usr/bin/node server.js
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    systemctl daemon-reload
+    systemctl enable ceo-ssh-api
+    systemctl start ceo-ssh-api
+    
+    success "Servicios configurados"
+}
+
+# Construir frontend
+build_frontend() {
+    info "Construyendo frontend..."
+    
+    cd $INSTALL_DIR/frontend
+    npm install --production=false
+    npm run build
+    npm run export
+    
+    success "Frontend construido"
+}
+
+# Configurar firewall
+configure_firewall() {
+    info "Configurando firewall..."
+    
+    ufw --force disable
+    ufw default deny incoming
+    ufw default allow outgoing
+    ufw allow 22/tcp
+    ufw allow $PANEL_PORT/tcp
+    ufw allow $API_PORT/tcp
+    ufw --force enable
+    
+    success "Firewall configurado"
+}
+
+# Mostrar información final
+show_final_info() {
+    IP=$(curl -s ifconfig.me)
+    
+    clear
+    echo ""
+    echo -e "${GREEN}════════════════════════════════════════════════════${NC}"
+    echo -e "${GREEN}       ✅ INSTALACIÓN COMPLETADA EXITOSAMENTE ✅${NC}"
+    echo -e "${GREEN}════════════════════════════════════════════════════${NC}"
+    echo ""
+    echo -e "${CYAN}🌐 ACCESO AL PANEL:${NC}"
+    echo -e "   ${GREEN}http://$IP:$PANEL_PORT${NC}"
+    echo ""
+    echo -e "${CYAN}👤 CREDENCIALES:${NC}"
+    echo -e "   ${YELLOW}Usuario:${NC} $ADMIN_USER"
+    echo -e "   ${YELLOW}Contraseña:${NC} $ADMIN_PASS"
+    echo ""
+    echo -e "${CYAN}📁 INFORMACIÓN:${NC}"
+    echo -e "   ${YELLOW}Directorio:${NC} $INSTALL_DIR"
+    echo -e "   ${YELLOW}Log:${NC} $LOG_FILE"
+    echo ""
+    echo -e "${CYAN}🔐 CREDENCIALES MySQL:${NC}"
+    echo -e "   ${YELLOW}Root Password:${NC} $MYSQL_ROOT_PASS"
+    echo -e "   ${YELLOW}CEO User:${NC} ceo_ssh"
+    echo -e "   ${YELLOW}CEO Pass:${NC} $MYSQL_CEO_PASS"
+    echo ""
+    echo -e "${GREEN}════════════════════════════════════════════════════${NC}"
+    echo ""
+}
+
+# Función principal
+main() {
+    banner
+    log "Iniciando instalación de $PANEL_NAME v$PANEL_VERSION"
+    
+    check_root
+    check_os
+    ask_config
+    generate_passwords
+    stop_services
+    install_dependencies
+    install_php
+    install_nodejs
+    configure_mysql
+    create_directories
+    create_backend_files
+    create_frontend_files
+    setup_database
+    build_frontend
+    configure_nginx
+    configure_services
+    configure_firewall
+    show_final_info
+    
+    log "Instalación completada exitosamente"
+}
+
+# Ejecutar
+main "$@"
