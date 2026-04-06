@@ -30,9 +30,10 @@ ADMIN_PASS=""
 ADMIN_EMAIL=""
 INSTALL_DIR="/var/www/ceo-ssh"
 LOG_FILE="/var/log/ceo-ssh-install.log"
-PANEL_ZIP_URL="PANEL_ZIP_URL="https://raw.githubusercontent.com/RmXF/Dev/main/ceo-ssh-panel.zip""  # CAMBIAR POR TU URL
-# O usa ruta local
-PANEL_ZIP_LOCAL="./panel.zip"
+
+# >>>>>>>>>>>>>>> URL DEL ZIP ACTUALIZADA <<<<<<<<<<<<<<<
+PANEL_ZIP_URL="https://raw.githubusercontent.com/RmXF/Dev/main/ceo-ssh-panel.zip"
+# <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
 
 # Banner
 banner() {
@@ -231,43 +232,41 @@ install_mysql() {
     success "MySQL/MariaDB instalado y configurado"
 }
 
-# Instalar PHP 8.1 (NATIVO de Ubuntu 22.04)
+# Instalar PHP 8.2
 install_php() {
-    info "Instalando PHP 8.1 (nativo de Ubuntu 22.04)..."
+    info "Instalando PHP 8.2..."
     
-    # NO agregar repositorios externos - usar los oficiales de Ubuntu
-    # apt-add-repository ppa:ondrej/php -y  # ← ELIMINA ESTA LÍNEA
-    
+    # Agregar repositorio PHP
+    add-apt-repository ppa:ondrej/php -y
     apt-get update -y
     
-    # Instalar PHP 8.1 y extensiones (todas disponibles nativamente)
+    # Instalar PHP y extensiones
     apt-get install -y \
-        php8.1 \
-        php8.1-cli \
-        php8.1-fpm \
-        php8.1-mysql \
-        php8.1-mbstring \
-        php8.1-xml \
-        php8.1-curl \
-        php8.1-zip \
-        php8.1-gd \
-        php8.1-bcmath
-    
-    # Nota: php8.1-json NO es necesario (viene incluido en php8.1-common)
+        php8.2 \
+        php8.2-cli \
+        php8.2-fpm \
+        php8.2-mysql \
+        php8.2-mysqli \
+        php8.2-pdo \
+        php8.2-curl \
+        php8.2-json \
+        php8.2-mbstring \
+        php8.2-xml \
+        php8.2-zip \
+        php8.2-gd \
+        php8.2-bcmath \
+        php8.2-tokenizer
     
     # Configurar PHP-FPM
-    sed -i 's/upload_max_filesize = 2M/upload_max_filesize = 100M/' /etc/php/8.1/fpm/php.ini
-    sed -i 's/post_max_size = 8M/post_max_size = 100M/' /etc/php/8.1/fpm/php.ini
-    sed -i 's/memory_limit = 128M/memory_limit = 512M/' /etc/php/8.1/fpm/php.ini
-    sed -i 's/max_execution_time = 30/max_execution_time = 300/' /etc/php/8.1/fpm/php.ini
+    sed -i 's/upload_max_filesize = 2M/upload_max_filesize = 100M/' /etc/php/8.2/fpm/php.ini
+    sed -i 's/post_max_size = 8M/post_max_size = 100M/' /etc/php/8.2/fpm/php.ini
+    sed -i 's/memory_limit = 128M/memory_limit = 512M/' /etc/php/8.2/fpm/php.ini
+    sed -i 's/max_execution_time = 30/max_execution_time = 300/' /etc/php/8.2/fpm/php.ini
     
-    systemctl enable php8.1-fpm
-    systemctl start php8.1-fpm
+    systemctl enable php8.2-fpm
+    systemctl start php8.2-fpm
     
-    # Verificar instalación
-    php -v
-    
-    success "PHP 8.1 instalado correctamente"
+    success "PHP 8.2 instalado"
 }
 
 # Instalar Node.js y npm
@@ -362,18 +361,25 @@ EOF
 
 # Descargar y descomprimir panel
 download_and_extract_panel() {
-    info "Descargando panel CEO SSH..."
+    info "Descargando panel CEO SSH desde GitHub..."
     
     # Crear directorio de instalación
     mkdir -p $INSTALL_DIR
     
-    # Descargar panel.zip (cambiar URL según tu servidor)
-    if [ -f "$PANEL_ZIP_LOCAL" ]; then
-        info "Usando panel.zip local..."
-        cp $PANEL_ZIP_LOCAL /tmp/ceo-ssh-panel.zip
+    # Usar la URL de GitHub raw
+    info "URL de descarga: $PANEL_ZIP_URL"
+    
+    # Descargar el zip
+    if wget --spider -q "$PANEL_ZIP_URL"; then
+        info "Archivo encontrado, descargando..."
+        wget -O /tmp/ceo-ssh-panel.zip "$PANEL_ZIP_URL" || error "Fallo la descarga desde GitHub"
     else
-        info "Descargando desde URL..."
-        wget -O /tmp/ceo-ssh-panel.zip $PANEL_ZIP_URL || error "No se pudo descargar el panel"
+        error "No se pudo acceder al archivo ZIP. Verifica la URL: $PANEL_ZIP_URL"
+    fi
+    
+    # Verificar que el archivo no esté vacío
+    if [ ! -s /tmp/ceo-ssh-panel.zip ]; then
+        error "El archivo ZIP descargado está vacío o es inválido"
     fi
     
     # Descomprimir
@@ -383,7 +389,12 @@ download_and_extract_panel() {
     # Limpiar
     rm -f /tmp/ceo-ssh-panel.zip
     
-    success "Panel descomprimido en $INSTALL_DIR"
+    # Verificar que se descomprimió correctamente
+    if [ ! -d "$INSTALL_DIR/frontend" ] || [ ! -d "$INSTALL_DIR/backend" ]; then
+        error "La estructura del ZIP no es la correcta. Faltan carpetas frontend/backend"
+    fi
+    
+    success "Panel descomprimido correctamente en $INSTALL_DIR"
 }
 
 # Configurar archivos del panel
@@ -489,7 +500,7 @@ import_database() {
         warning "No se encontró schema.sql, creando estructura básica..."
         
         # Crear tablas básicas
-        mysql -u ceo_ssh -p$MYSQL_CEO_PASS ceo_ssh << 'SQLEOF'
+        mysql -u ceo_ssh -p$MYSQL_CEO_PASS ceo_ssh << SQLEOF
 -- Tabla de usuarios
 CREATE TABLE IF NOT EXISTS `users` (
     `id` INT AUTO_INCREMENT PRIMARY KEY,
@@ -559,8 +570,8 @@ CREATE TABLE IF NOT EXISTS `settings` (
 
 -- Insertar usuario admin
 INSERT INTO `users` (username, password, email, role, status) 
-VALUES ('$ADMIN_USER', '$ADMIN_PASS', '$ADMIN_EMAIL', 'admin', 'active')
-ON DUPLICATE KEY UPDATE password = '$ADMIN_PASS';
+VALUES ('$ADMIN_USER', '$(openssl passwd -6 "$ADMIN_PASS")', '$ADMIN_EMAIL', 'admin', 'active')
+ON DUPLICATE KEY UPDATE password = VALUES(password);
 
 -- Configuraciones por defecto
 INSERT INTO `settings` (`key`, `value`, `description`) VALUES
