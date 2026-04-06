@@ -1,0 +1,755 @@
+#!/bin/bash
+
+# ==============================================
+# CEO SSH PANEL - INSTALADOR OFICIAL
+# Panel Profesional con Next.js + PHP + MySQL
+# ==============================================
+
+set -e
+
+# Colores
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+PURPLE='\033[0;35m'
+CYAN='\033[0;36m'
+WHITE='\033[1;37m'
+NC='\033[0m'
+
+# Variables globales
+PANEL_VERSION="1.0.0"
+PANEL_NAME="CEO SSH"
+PANEL_PORT="80"
+API_PORT="3001"
+MYSQL_ROOT_PASS=""
+MYSQL_CEO_PASS=""
+JWT_SECRET=""
+ADMIN_USER=""
+ADMIN_PASS=""
+ADMIN_EMAIL=""
+INSTALL_DIR="/var/www/ceo-ssh"
+LOG_FILE="/var/log/ceo-ssh-install.log"
+PANEL_ZIP_URL="https://tu-servidor.com/ceo-ssh-panel.zip"  # CAMBIAR POR TU URL
+# O usa ruta local
+PANEL_ZIP_LOCAL="./panel.zip"
+
+# Banner
+banner() {
+    clear
+    echo -e "${CYAN}"
+    echo "   ██████╗███████╗ ██████╗     ███████╗███████╗██╗  ██╗"
+    echo "  ██╔════╝██╔════╝██╔═══██╗    ██╔════╝██╔════╝██║  ██║"
+    echo "  ██║     █████╗  ██║   ██║    ███████╗███████╗███████║"
+    echo "  ██║     ██╔══╝  ██║   ██║    ╚════██║╚════██║██╔══██║"
+    echo "  ╚██████╗███████╗╚██████╔╝    ███████║███████║██║  ██║"
+    echo "   ╚═════╝╚══════╝ ╚═════╝     ╚══════╝╚══════╝╚═╝  ╚═╝"
+    echo -e "${NC}"
+    echo -e "${GREEN}        PANEL DE CONTROL PROFESIONAL SSH${NC}"
+    echo -e "${YELLOW}                   Versión ${PANEL_VERSION}${NC}"
+    echo -e "${WHITE}        🚀 Instalación Automática Completa 🚀${NC}"
+    echo ""
+}
+
+# Log function
+log() {
+    echo -e "${BLUE}[$(date '+%Y-%m-%d %H:%M:%S')]${NC} $1" | tee -a $LOG_FILE
+}
+
+error() {
+    echo -e "${RED}❌ ERROR: $1${NC}" | tee -a $LOG_FILE
+    exit 1
+}
+
+success() {
+    echo -e "${GREEN}✅ $1${NC}" | tee -a $LOG_FILE
+}
+
+info() {
+    echo -e "${CYAN}ℹ️  $1${NC}" | tee -a $LOG_FILE
+}
+
+warning() {
+    echo -e "${YELLOW}⚠️  $1${NC}" | tee -a $LOG_FILE
+}
+
+# Check root
+check_root() {
+    if [ "$EUID" -ne 0 ]; then
+        error "Por favor ejecuta como root (sudo ./install.sh)"
+    fi
+    success "Root verificados"
+}
+
+# Check OS
+check_os() {
+    if [ -f /etc/os-release ]; then
+        . /etc/os-release
+        OS=$ID
+        VERSION=$VERSION_ID
+        
+        if [[ "$OS" == "ubuntu" ]] || [[ "$OS" == "debian" ]]; then
+            success "Sistema operativo compatible: $OS $VERSION"
+        else
+            error "Sistema no soportado. Usa Ubuntu o Debian"
+        fi
+    else
+        error "No se pudo detectar el sistema operativo"
+    fi
+}
+
+# Solicitar datos de configuración
+ask_config() {
+    echo ""
+    echo -e "${PURPLE}════════════════════════════════════════════════════${NC}"
+    echo -e "${WHITE}       CONFIGURACIÓN DEL PANEL CEO SSH${NC}"
+    echo -e "${PURPLE}════════════════════════════════════════════════════${NC}"
+    echo ""
+    
+    # Usuario admin
+    read -p "$(echo -e ${CYAN}👤 Usuario administrador: ${NC})" ADMIN_USER
+    while [[ -z "$ADMIN_USER" ]]; do
+        read -p "$(echo -e ${RED}⚠️ Usuario requerido: ${NC})" ADMIN_USER
+    done
+    
+    # Email admin
+    read -p "$(echo -e ${CYAN}📧 Email administrador: ${NC})" ADMIN_EMAIL
+    while [[ -z "$ADMIN_EMAIL" ]]; do
+        read -p "$(echo -e ${RED}⚠️ Email requerido: ${NC})" ADMIN_EMAIL
+    done
+    
+    # Contraseña admin
+    read -s -p "$(echo -e ${CYAN}🔑 Contraseña administrador: ${NC})" ADMIN_PASS
+    echo ""
+    while [[ ${#ADMIN_PASS} -lt 6 ]]; do
+        read -s -p "$(echo -e ${RED}⚠️ Mínimo 6 caracteres: ${NC})" ADMIN_PASS
+        echo ""
+    done
+    
+    # Confirmar contraseña
+    read -s -p "$(echo -e ${CYAN}✅ Confirmar contraseña: ${NC})" ADMIN_PASS_CONFIRM
+    echo ""
+    if [[ "$ADMIN_PASS" != "$ADMIN_PASS_CONFIRM" ]]; then
+        error "Las contraseñas no coinciden"
+    fi
+    
+    # Puerto del panel (por defecto 80)
+    read -p "$(echo -e ${CYAN}🌐 Puerto del panel [80]: ${NC})" PANEL_PORT_INPUT
+    PANEL_PORT=${PANEL_PORT_INPUT:-80}
+    
+    echo ""
+    success "Configuración guardada"
+}
+
+# Detener servicios que usan puerto 80
+stop_services() {
+    info "Verificando servicios en puerto 80..."
+    
+    # Detener Apache si está corriendo
+    if systemctl is-active --quiet apache2; then
+        warning "Apache está corriendo en puerto 80, deteniendo..."
+        systemctl stop apache2
+        systemctl disable apache2
+        success "Apache detenido y deshabilitado"
+    fi
+    
+    # Detener Nginx si está corriendo
+    if systemctl is-active --quiet nginx; then
+        warning "Nginx está corriendo en puerto 80, deteniendo..."
+        systemctl stop nginx
+        systemctl disable nginx
+        success "Nginx detenido y deshabilitado"
+    fi
+    
+    # Matar cualquier proceso en puerto 80
+    PID=$(lsof -ti:80 2>/dev/null || true)
+    if [ ! -z "$PID" ]; then
+        warning "Matando procesos en puerto 80..."
+        kill -9 $PID 2>/dev/null || true
+        success "Procesos terminados"
+    fi
+    
+    success "Puerto 80 liberado"
+}
+
+# Instalar dependencias del sistema
+install_dependencies() {
+    info "Instalando dependencias del sistema..."
+    
+    apt-get update -y
+    
+    # Dependencias básicas
+    apt-get install -y \
+        curl \
+        wget \
+        git \
+        unzip \
+        zip \
+        tar \
+        software-properties-common \
+        apt-transport-https \
+        ca-certificates \
+        gnupg \
+        lsb-release \
+        net-tools \
+        lsof \
+        ufw \
+        fail2ban
+    
+    success "Dependencias básicas instaladas"
+}
+
+# Instalar MySQL/MariaDB
+install_mysql() {
+    info "Instalando MySQL/MariaDB..."
+    
+    # Generar contraseñas aleatorias
+    MYSQL_ROOT_PASS=$(openssl rand -base64 16)
+    MYSQL_CEO_PASS=$(openssl rand -base64 16)
+    
+    # Instalar MariaDB
+    apt-get install -y mariadb-server mariadb-client
+    
+    # Configurar seguridad
+    mysql -e "SET PASSWORD FOR 'root'@'localhost' = PASSWORD('$MYSQL_ROOT_PASS');" 2>/dev/null || true
+    mysql -e "DELETE FROM mysql.user WHERE User='';" 2>/dev/null || true
+    mysql -e "DELETE FROM mysql.user WHERE User='root' AND Host NOT IN ('localhost', '127.0.0.1', '::1');" 2>/dev/null || true
+    mysql -e "DROP DATABASE IF EXISTS test;" 2>/dev/null || true
+    mysql -e "DELETE FROM mysql.db WHERE Db='test' OR Db='test\\_%';" 2>/dev/null || true
+    mysql -e "FLUSH PRIVILEGES;" 2>/dev/null || true
+    
+    # Crear base de datos para CEO SSH
+    mysql -u root -p$MYSQL_ROOT_PASS -e "CREATE DATABASE IF NOT EXISTS ceo_ssh CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;" 2>/dev/null
+    mysql -u root -p$MYSQL_ROOT_PASS -e "CREATE USER IF NOT EXISTS 'ceo_ssh'@'localhost' IDENTIFIED BY '$MYSQL_CEO_PASS';" 2>/dev/null
+    mysql -u root -p$MYSQL_ROOT_PASS -e "GRANT ALL PRIVILEGES ON ceo_ssh.* TO 'ceo_ssh'@'localhost';" 2>/dev/null
+    mysql -u root -p$MYSQL_ROOT_PASS -e "FLUSH PRIVILEGES;" 2>/dev/null
+    
+    # Habilitar y iniciar MySQL
+    systemctl enable mariadb
+    systemctl start mariadb
+    
+    success "MySQL/MariaDB instalado y configurado"
+}
+
+# Instalar PHP 8.2
+install_php() {
+    info "Instalando PHP 8.2..."
+    
+    # Agregar repositorio PHP
+    add-apt-repository ppa:ondrej/php -y
+    apt-get update -y
+    
+    # Instalar PHP y extensiones
+    apt-get install -y \
+        php8.2 \
+        php8.2-cli \
+        php8.2-fpm \
+        php8.2-mysql \
+        php8.2-mysqli \
+        php8.2-pdo \
+        php8.2-curl \
+        php8.2-json \
+        php8.2-mbstring \
+        php8.2-xml \
+        php8.2-zip \
+        php8.2-gd \
+        php8.2-bcmath \
+        php8.2-tokenizer
+    
+    # Configurar PHP-FPM
+    sed -i 's/upload_max_filesize = 2M/upload_max_filesize = 100M/' /etc/php/8.2/fpm/php.ini
+    sed -i 's/post_max_size = 8M/post_max_size = 100M/' /etc/php/8.2/fpm/php.ini
+    sed -i 's/memory_limit = 128M/memory_limit = 512M/' /etc/php/8.2/fpm/php.ini
+    sed -i 's/max_execution_time = 30/max_execution_time = 300/' /etc/php/8.2/fpm/php.ini
+    
+    systemctl enable php8.2-fpm
+    systemctl start php8.2-fpm
+    
+    success "PHP 8.2 instalado"
+}
+
+# Instalar Node.js y npm
+install_nodejs() {
+    info "Instalando Node.js 20 LTS..."
+    
+    curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+    apt-get install -y nodejs
+    
+    # Instalar PM2 globalmente
+    npm install -g pm2
+    
+    success "Node.js 20 y PM2 instalados"
+}
+
+# Instalar Nginx
+install_nginx() {
+    info "Instalando Nginx..."
+    
+    apt-get install -y nginx
+    
+    # Crear configuración para CEO SSH
+    cat > /etc/nginx/sites-available/ceo-ssh << 'EOF'
+server {
+    listen 80;
+    listen [::]:80;
+    server_name _;
+    
+    root /var/www/ceo-ssh/frontend/out;
+    index index.html index.htm;
+    
+    # Logs
+    access_log /var/log/nginx/ceo-ssh-access.log;
+    error_log /var/log/nginx/ceo-ssh-error.log;
+    
+    # Frontend
+    location / {
+        try_files $uri $uri/ /index.html;
+        add_header X-Frame-Options "SAMEORIGIN";
+        add_header X-Content-Type-Options "nosniff";
+    }
+    
+    # API Backend
+    location /api {
+        proxy_pass http://localhost:3001;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host $host;
+        proxy_cache_bypass $http_upgrade;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+    
+    # WebSocket support
+    location /socket.io {
+        proxy_pass http://localhost:3001;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+    }
+    
+    # PHP Backend (legacy support)
+    location ~ \.php$ {
+        include snippets/fastcgi-php.conf;
+        fastcgi_pass unix:/var/run/php/php8.2-fpm.sock;
+        fastcgi_param SCRIPT_FILENAME /var/www/ceo-ssh/backend$fastcgi_script_name;
+        include fastcgi_params;
+    }
+    
+    # Deny access to hidden files
+    location ~ /\. {
+        deny all;
+    }
+}
+EOF
+    
+    # Habilitar sitio
+    ln -sf /etc/nginx/sites-available/ceo-ssh /etc/nginx/sites-enabled/
+    rm -f /etc/nginx/sites-enabled/default
+    
+    # Test config
+    nginx -t
+    
+    systemctl enable nginx
+    systemctl restart nginx
+    
+    success "Nginx configurado en puerto 80"
+}
+
+# Descargar y descomprimir panel
+download_and_extract_panel() {
+    info "Descargando panel CEO SSH..."
+    
+    # Crear directorio de instalación
+    mkdir -p $INSTALL_DIR
+    
+    # Descargar panel.zip (cambiar URL según tu servidor)
+    if [ -f "$PANEL_ZIP_LOCAL" ]; then
+        info "Usando panel.zip local..."
+        cp $PANEL_ZIP_LOCAL /tmp/ceo-ssh-panel.zip
+    else
+        info "Descargando desde URL..."
+        wget -O /tmp/ceo-ssh-panel.zip $PANEL_ZIP_URL || error "No se pudo descargar el panel"
+    fi
+    
+    # Descomprimir
+    info "Descomprimiendo archivos..."
+    unzip -o /tmp/ceo-ssh-panel.zip -d $INSTALL_DIR
+    
+    # Limpiar
+    rm -f /tmp/ceo-ssh-panel.zip
+    
+    success "Panel descomprimido en $INSTALL_DIR"
+}
+
+# Configurar archivos del panel
+configure_panel() {
+    info "Configurando panel..."
+    
+    # Generar JWT secret
+    JWT_SECRET=$(openssl rand -base64 32)
+    
+    # Configurar backend
+    cat > $INSTALL_DIR/backend/config.php << EOF
+<?php
+// CEO SSH Panel Configuration
+define('DB_HOST', 'localhost');
+define('DB_USER', 'ceo_ssh');
+define('DB_PASS', '$MYSQL_CEO_PASS');
+define('DB_NAME', 'ceo_ssh');
+
+define('JWT_SECRET', '$JWT_SECRET');
+define('PANEL_VERSION', '$PANEL_VERSION');
+define('PANEL_NAME', '$PANEL_NAME');
+
+// Admin credentials
+define('ADMIN_USER', '$ADMIN_USER');
+define('ADMIN_PASS', password_hash('$ADMIN_PASS', PASSWORD_DEFAULT));
+define('ADMIN_EMAIL', '$ADMIN_EMAIL');
+
+// API Settings
+define('API_PORT', $API_PORT);
+define('API_URL', 'http://localhost:$API_PORT');
+
+// Timezone
+date_default_timezone_set('America/Mexico_City');
+
+// Error reporting
+error_reporting(E_ALL);
+ini_set('display_errors', 0);
+ini_set('log_errors', 1);
+ini_set('error_log', '/var/log/ceo-ssh-php.log');
+?>
+EOF
+    
+    # Configurar frontend .env
+    cat > $INSTALL_DIR/frontend/.env.local << EOF
+NEXT_PUBLIC_API_URL=http://localhost/api
+NEXT_PUBLIC_WS_URL=ws://localhost:3001
+NEXT_PUBLIC_PANEL_NAME=$PANEL_NAME
+NEXT_PUBLIC_PANEL_VERSION=$PANEL_VERSION
+EOF
+    
+    # Crear archivo de credenciales para el instalador
+    cat > $INSTALL_DIR/credentials.txt << EOF
+═══════════════════════════════════════════════════════════
+                CEO SSH PANEL - CREDENCIALES
+═══════════════════════════════════════════════════════════
+
+📱 URL ACCESO: http://$(curl -s ifconfig.me):$PANEL_PORT
+
+👤 USUARIO ADMIN: $ADMIN_USER
+🔑 CONTRASEÑA: $ADMIN_PASS
+📧 EMAIL: $ADMIN_EMAIL
+
+🗄️ BASE DE DATOS:
+   - Nombre: ceo_ssh
+   - Usuario: ceo_ssh
+   - Contraseña: $MYSQL_CEO_PASS
+   - Root Password: $MYSQL_ROOT_PASS
+
+⚙️ CONFIGURACIÓN:
+   - Panel Version: $PANEL_VERSION
+   - Puerto Panel: $PANEL_PORT
+   - Puerto API: $API_PORT
+   - JWT Secret: $JWT_SECRET
+
+📁 DIRECTORIOS:
+   - Panel: $INSTALL_DIR
+   - Backend: $INSTALL_DIR/backend
+   - Frontend: $INSTALL_DIR/frontend
+
+📝 LOGS:
+   - Instalación: $LOG_FILE
+   - PHP: /var/log/ceo-ssh-php.log
+   - Nginx: /var/log/nginx/ceo-ssh-*
+
+═══════════════════════════════════════════════════════════
+⚠️  GUARDA ESTAS CREDENCIALES EN UN LUGAR SEGURO
+═══════════════════════════════════════════════════════════
+EOF
+    
+    chmod 600 $INSTALL_DIR/credentials.txt
+    
+    success "Panel configurado"
+}
+
+# Importar base de datos
+import_database() {
+    info "Importando estructura de base de datos..."
+    
+    if [ -f "$INSTALL_DIR/database/schema.sql" ]; then
+        mysql -u ceo_ssh -p$MYSQL_CEO_PASS ceo_ssh < $INSTALL_DIR/database/schema.sql
+        success "Base de datos importada"
+    else
+        warning "No se encontró schema.sql, creando estructura básica..."
+        
+        # Crear tablas básicas
+        mysql -u ceo_ssh -p$MYSQL_CEO_PASS ceo_ssh << 'SQLEOF'
+-- Tabla de usuarios
+CREATE TABLE IF NOT EXISTS `users` (
+    `id` INT AUTO_INCREMENT PRIMARY KEY,
+    `username` VARCHAR(50) UNIQUE NOT NULL,
+    `password` VARCHAR(255) NOT NULL,
+    `email` VARCHAR(100),
+    `role` ENUM('admin', 'user') DEFAULT 'user',
+    `status` ENUM('active', 'inactive', 'suspended') DEFAULT 'active',
+    `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    `updated_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    `last_login` TIMESTAMP NULL,
+    INDEX idx_username (username),
+    INDEX idx_status (status)
+);
+
+-- Tabla de sesiones
+CREATE TABLE IF NOT EXISTS `sessions` (
+    `id` VARCHAR(128) PRIMARY KEY,
+    `user_id` INT NOT NULL,
+    `ip_address` VARCHAR(45),
+    `user_agent` TEXT,
+    `payload` TEXT,
+    `last_activity` INT,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+    INDEX idx_last_activity (last_activity)
+);
+
+-- Tabla de tokens SSH
+CREATE TABLE IF NOT EXISTS `ssh_tokens` (
+    `id` INT AUTO_INCREMENT PRIMARY KEY,
+    `username` VARCHAR(50) UNIQUE NOT NULL,
+    `password` VARCHAR(255) NOT NULL,
+    `expires_at` DATE NOT NULL,
+    `status` ENUM('active', 'expired', 'suspended') DEFAULT 'active',
+    `traffic_limit` BIGINT DEFAULT NULL,
+    `traffic_used` BIGINT DEFAULT 0,
+    `created_by` INT,
+    `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    `updated_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    FOREIGN KEY (created_by) REFERENCES users(id),
+    INDEX idx_username (username),
+    INDEX idx_status (status),
+    INDEX idx_expires (expires_at)
+);
+
+-- Tabla de logs
+CREATE TABLE IF NOT EXISTS `logs` (
+    `id` INT AUTO_INCREMENT PRIMARY KEY,
+    `user_id` INT,
+    `action` VARCHAR(100),
+    `details` TEXT,
+    `ip_address` VARCHAR(45),
+    `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(id),
+    INDEX idx_user (user_id),
+    INDEX idx_created (created_at),
+    INDEX idx_action (action)
+);
+
+-- Tabla de configuración
+CREATE TABLE IF NOT EXISTS `settings` (
+    `key` VARCHAR(100) PRIMARY KEY,
+    `value` TEXT,
+    `description` TEXT,
+    `updated_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
+
+-- Insertar usuario admin
+INSERT INTO `users` (username, password, email, role, status) 
+VALUES ('$ADMIN_USER', '$ADMIN_PASS', '$ADMIN_EMAIL', 'admin', 'active')
+ON DUPLICATE KEY UPDATE password = '$ADMIN_PASS';
+
+-- Configuraciones por defecto
+INSERT INTO `settings` (`key`, `value`, `description`) VALUES
+('panel_name', '$PANEL_NAME', 'Nombre del panel'),
+('panel_version', '$PANEL_VERSION', 'Versión del panel'),
+('maintenance_mode', '0', 'Modo mantenimiento'),
+('dark_mode_default', 'dark', 'Tema por defecto'),
+('session_timeout', '3600', 'Tiempo de sesión en segundos'),
+('max_login_attempts', '5', 'Intentos máximos de login')
+ON DUPLICATE KEY UPDATE `value` = VALUES(`value`);
+SQLEOF
+        
+        success "Estructura de base de datos creada"
+    fi
+}
+
+# Instalar dependencias de Node.js y construir frontend
+build_frontend() {
+    info "Instalando dependencias del frontend..."
+    
+    cd $INSTALL_DIR/frontend
+    
+    # Instalar dependencias
+    npm install --production=false
+    
+    info "Construyendo aplicación Next.js..."
+    npm run build
+    
+    # Exportar como sitio estático
+    npm run export || true
+    
+    success "Frontend construido"
+}
+
+# Configurar servicios systemd
+configure_services() {
+    info "Configurando servicios systemd..."
+    
+    # Servicio API (Node.js/Express)
+    cat > /etc/systemd/system/ceo-ssh-api.service << EOF
+[Unit]
+Description=CEO SSH Panel API Service
+After=network.target mysql.service
+Wants=mysql.service
+
+[Service]
+Type=simple
+User=www-data
+WorkingDirectory=$INSTALL_DIR/backend
+ExecStart=/usr/bin/node $INSTALL_DIR/backend/server.js
+Restart=always
+RestartSec=10
+Environment="NODE_ENV=production"
+Environment="PORT=$API_PORT"
+
+[Install]
+WantedBy=multi-user.target
+EOF
+    
+    # Servicio WebSocket
+    cat > /etc/systemd/system/ceo-ssh-ws.service << EOF
+[Unit]
+Description=CEO SSH Panel WebSocket Service
+After=network.target
+
+[Service]
+Type=simple
+User=www-data
+WorkingDirectory=$INSTALL_DIR/backend
+ExecStart=/usr/bin/node $INSTALL_DIR/backend/websocket.js
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+EOF
+    
+    # Recargar systemd
+    systemctl daemon-reload
+    
+    # Habilitar servicios
+    systemctl enable ceo-ssh-api.service
+    systemctl enable ceo-ssh-ws.service
+    
+    # Iniciar servicios
+    systemctl start ceo-ssh-api.service
+    systemctl start ceo-ssh-ws.service
+    
+    success "Servicios configurados e iniciados"
+}
+
+# Configurar firewall
+configure_firewall() {
+    info "Configurando firewall..."
+    
+    # Configurar UFW
+    ufw --force disable
+    ufw default deny incoming
+    ufw default allow outgoing
+    ufw allow 22/tcp comment 'SSH'
+    ufw allow 80/tcp comment 'HTTP Panel'
+    ufw allow 443/tcp comment 'HTTPS Panel'
+    ufw allow $API_PORT/tcp comment 'CEO SSH API'
+    
+    # Puertos SSH/VPN
+    ufw allow 22/tcp comment 'SSH'
+    ufw allow 443/udp comment 'OpenVPN'
+    ufw allow 1194/udp comment 'OpenVPN'
+    ufw allow 7300/tcp comment 'Dropbear'
+    ufw allow 8000/tcp comment 'Stunnel'
+    ufw allow 3128/tcp comment 'Squid'
+    
+    ufw --force enable
+    
+    # Configurar fail2ban
+    systemctl enable fail2ban
+    systemctl start fail2ban
+    
+    success "Firewall configurado"
+}
+
+# Mostrar información final
+show_final_info() {
+    clear
+    echo ""
+    echo -e "${GREEN}════════════════════════════════════════════════════${NC}"
+    echo -e "${GREEN}       ✅ INSTALACIÓN COMPLETADA EXITOSAMENTE ✅${NC}"
+    echo -e "${GREEN}════════════════════════════════════════════════════${NC}"
+    echo ""
+    
+    IP=$(curl -s ifconfig.me)
+    
+    echo -e "${CYAN}🌐 ACCESO AL PANEL:${NC}"
+    echo -e "   ${GREEN}http://$IP:$PANEL_PORT${NC}"
+    echo ""
+    
+    echo -e "${CYAN}👤 CREDENCIALES DE ACCESO:${NC}"
+    echo -e "   ${YELLOW}Usuario:${NC} $ADMIN_USER"
+    echo -e "   ${YELLOW}Contraseña:${NC} $ADMIN_PASS"
+    echo ""
+    
+    echo -e "${CYAN}📁 INFORMACIÓN IMPORTANTE:${NC}"
+    echo -e "   ${YELLOW}Credenciales guardadas en:${NC} $INSTALL_DIR/credentials.txt"
+    echo -e "   ${YELLOW}Log de instalación:${NC} $LOG_FILE"
+    echo -e "   ${YELLOW}Directorio del panel:${NC} $INSTALL_DIR"
+    echo ""
+    
+    echo -e "${CYAN}🛠️ COMANDOS ÚTILES:${NC}"
+    echo -e "   ${YELLOW}Reiniciar panel:${NC} systemctl restart ceo-ssh-api"
+    echo -e "   ${YELLOW}Ver logs:${NC} journalctl -u ceo-ssh-api -f"
+    echo -e "   ${YELLOW}Reiniciar Nginx:${NC} systemctl restart nginx"
+    echo -e "   ${YELLOW}Reiniciar PHP:${NC} systemctl restart php8.2-fpm"
+    echo -e "   ${YELLOW}Estado del panel:${NC} pm2 status"
+    echo ""
+    
+    echo -e "${YELLOW}⚠️  RECOMENDACIONES POST-INSTALACIÓN:${NC}"
+    echo -e "   1. Cambia la contraseña root de MySQL"
+    echo -e "   2. Configura SSL/HTTPS con Certbot"
+    echo -e "   3. Revisa las credenciales guardadas"
+    echo ""
+    
+    echo -e "${GREEN}════════════════════════════════════════════════════${NC}"
+    echo -e "${GREEN}   🚀 CEO SSH PANEL LISTO PARA USAR 🚀${NC}"
+    echo -e "${GREEN}════════════════════════════════════════════════════${NC}"
+    echo ""
+}
+
+# Función principal
+main() {
+    banner
+    log "Iniciando instalación de $PANEL_NAME v$PANEL_VERSION"
+    
+    check_root
+    check_os
+    ask_config
+    stop_services
+    install_dependencies
+    install_mysql
+    install_php
+    install_nodejs
+    install_nginx
+    download_and_extract_panel
+    configure_panel
+    import_database
+    build_frontend
+    configure_services
+    configure_firewall
+    show_final_info
+    
+    log "Instalación completada exitosamente"
+}
+
+# Ejecutar instalación
+main "$@"
