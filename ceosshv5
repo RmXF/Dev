@@ -30,7 +30,7 @@ ADMIN_PASS=""
 ADMIN_EMAIL=""
 INSTALL_DIR="/var/www/ceo-ssh"
 LOG_FILE="/var/log/ceo-ssh-install.log"
-PANEL_ZIP_URL="https://tu-servidor.com/ceo-ssh-panel.zip"  # CAMBIAR POR TU URL
+PANEL_ZIP_URL="PANEL_ZIP_URL="https://raw.githubusercontent.com/RmXF/Dev/main/ceo-ssh-panel.zip""  # CAMBIAR POR TU URL
 # O usa ruta local
 PANEL_ZIP_LOCAL="./panel.zip"
 
