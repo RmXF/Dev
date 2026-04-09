@@ -30,7 +30,7 @@ ADMIN_PASS=""
 ADMIN_EMAIL=""
 
 # URL del panel ZIP (cambiar por tu URL real)
-PANEL_ZIP_URL="https://raw.githubusercontent.com/tu-usuario/ceo-ssh-panel/main/panel.zip"
+PANEL_ZIP_URL="https://raw.githubusercontent.com/RmXF/Dev/main/panel.zip"
 # O usa ruta local
 PANEL_ZIP_LOCAL="./panel.zip"
 
