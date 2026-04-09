@@ -30,7 +30,7 @@ ADMIN_PASS=""
 ADMIN_EMAIL=""
 
 # URL del panel ZIP
-PANEL_ZIP_URL="https://raw.githubusercontent.com/RmXF/Dev/main/panel.zip"
+PANEL_ZIP_URL="https://raw.githubusercontent.com/RmXF/Dev/main/panelv10.zip"
 PANEL_ZIP_LOCAL="./panel.zip"
 
 banner() {
