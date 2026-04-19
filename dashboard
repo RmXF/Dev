@@ -1,77 +1,87 @@
 #!/bin/bash
 
 # ==============================================
-# Panel de Administración de VPS - v1.0
-# Autor: Admin Panel
-# Descripción: Panel para gestión de usuarios VPS
+# Panel de Administración de VPS - CentOS/RHEL
 # ==============================================
 
-# Colores para output
+set -e
+
+# Colores
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m'
 
-# Configuración
+# Variables
 PANEL_DIR="/var/www/vps-panel"
 PANEL_PORT="8080"
 DB_FILE="${PANEL_DIR}/data/vps_panel.db"
-LOG_FILE="/var/log/vps-panel/panel.log"
+APACHE_USER="apache"
+APACHE_GROUP="apache"
 
-# Funciones
 print_color() {
     echo -e "${2}${1}${NC}"
 }
 
-check_root() {
-    if [[ $EUID -ne 0 ]]; then
-        print_color "Este script debe ejecutarse como root" "$RED"
+# Detectar sistema operativo
+detect_os() {
+    if [ -f /etc/redhat-release ]; then
+        OS="centos"
+        print_color "Sistema CentOS/RHEL detectado" "$GREEN"
+    elif [ -f /etc/debian_version ]; then
+        OS="debian"
+        print_color "Sistema Debian/Ubuntu detectado" "$GREEN"
+    else
+        print_color "Sistema operativo no soportado" "$RED"
         exit 1
     fi
 }
 
-install_dependencies() {
-    print_color "Instalando dependencias..." "$BLUE"
+# Instalar dependencias para CentOS
+install_dependencies_centos() {
+    print_color "Instalando dependencias para CentOS..." "$BLUE"
     
-    # Actualizar sistema
-    apt-get update -y
+    # Habilitar EPEL
+    yum install -y epel-release
     
-    # Instalar dependencias
-    apt-get install -y apache2 \
-                       mysql-server \
-                       php \
-                       libapache2-mod-php \
-                       php-mysql \
-                       php-curl \
-                       php-json \
-                       php-mbstring \
-                       php-xml \
-                       php-zip \
-                       php-gd \
-                       curl \
-                       wget \
-                       git \
-                       unzip \
-                       net-tools \
-                       ufw \
-                       fail2ban \
-                       python3 \
-                       python3-pip
+    # Instalar paquetes
+    yum install -y httpd \
+                   php \
+                   php-mysqlnd \
+                   php-sqlite3 \
+                   php-json \
+                   php-mbstring \
+                   php-xml \
+                   php-gd \
+                   curl \
+                   wget \
+                   git \
+                   unzip \
+                   net-tools \
+                   firewalld \
+                   fail2ban \
+                   sqlite \
+                   python3 \
+                   python3-pip
     
-    # Instalar Node.js para funciones avanzadas
-    curl -fsSL https://deb.nodesource.com/setup_18.x | bash -
-    apt-get install -y nodejs
+    # Instalar Node.js
+    curl -sL https://rpm.nodesource.com/setup_18.x | bash -
+    yum install -y nodejs
     
-    print_color "Dependencias instaladas correctamente" "$GREEN"
+    # Configurar Apache user
+    APACHE_USER="apache"
+    APACHE_GROUP="apache"
+    
+    print_color "Dependencias instaladas" "$GREEN"
 }
 
+# Configurar base de datos
 setup_database() {
     print_color "Configurando base de datos..." "$BLUE"
     
     mkdir -p "$(dirname $DB_FILE)"
     
-    # Crear base de datos SQLite
     cat > /tmp/init_db.sql << 'EOF'
 CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -132,7 +142,6 @@ CREATE TABLE IF NOT EXISTS logs (
     FOREIGN KEY (user_id) REFERENCES users(id)
 );
 
--- Insertar usuario administrador por defecto
 INSERT OR IGNORE INTO users (username, password, email, role) 
 VALUES ('admin', '$2y$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', 'admin@vpspanel.com', 'admin');
 EOF
@@ -141,11 +150,12 @@ EOF
     rm /tmp/init_db.sql
     
     chmod 644 "$DB_FILE"
-    chown -R www-data:www-data "$(dirname $DB_FILE)"
+    chown -R ${APACHE_USER}:${APACHE_GROUP} "$(dirname $DB_FILE)"
     
     print_color "Base de datos configurada" "$GREEN"
 }
 
+# Crear archivos del panel
 create_panel_files() {
     print_color "Creando archivos del panel..." "$BLUE"
     
@@ -154,8 +164,9 @@ create_panel_files() {
     mkdir -p "${PANEL_DIR}/css"
     mkdir -p "${PANEL_DIR}/js"
     mkdir -p "${PANEL_DIR}/assets"
+    mkdir -p "${PANEL_DIR}/logs"
     
-    # Archivo de configuración PHP
+    # Configuración PHP
     cat > "${PANEL_DIR}/config.php" << 'EOF'
 <?php
 define('DB_FILE', '/var/www/vps-panel/data/vps_panel.db');
@@ -180,7 +191,7 @@ function isLoggedIn() {
 
 function redirectIfNotLoggedIn() {
     if (!isLoggedIn()) {
-        header('Location: /login.php');
+        header('Location: login.php');
         exit();
     }
 }
@@ -192,8 +203,8 @@ function logAction($user_id, $action, $description) {
 }
 ?>
 EOF
-    
-    # Página de login
+
+    # Login
     cat > "${PANEL_DIR}/login.php" << 'EOF'
 <!DOCTYPE html>
 <html lang="es">
@@ -201,7 +212,7 @@ EOF
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Login - VPS Admin Panel</title>
-    <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2/dist/tailwind.min.css" rel="stylesheet">
+    <script src="https://cdn.tailwindcss.com"></script>
 </head>
 <body class="bg-gradient-to-r from-blue-900 to-purple-900 min-h-screen flex items-center justify-center">
     <div class="bg-white rounded-lg shadow-xl p-8 w-full max-w-md">
@@ -228,11 +239,9 @@ EOF
                     $_SESSION['role'] = $user['role'];
                     $_SESSION['logged_in'] = true;
                     
-                    // Actualizar último login
                     $updateStmt = $pdo->prepare("UPDATE users SET last_login = CURRENT_TIMESTAMP WHERE id = ?");
                     $updateStmt->execute([$user['id']]);
                     
-                    // Registrar login
                     logAction($user['id'], 'login', 'Usuario inició sesión');
                     
                     header('Location: dashboard.php');
@@ -267,15 +276,15 @@ EOF
         </form>
         
         <div class="mt-6 text-center text-sm text-gray-600">
-            <p>Credenciales por defecto: admin / password</p>
-            <p class="mt-2">© 2024 VPS Admin Panel - v1.0</p>
+            <p>Credenciales: admin / password</p>
+            <p class="mt-2">© 2025 VPS Admin Panel</p>
         </div>
     </div>
 </body>
 </html>
 EOF
-    
-    # Dashboard principal
+
+    # Dashboard
     cat > "${PANEL_DIR}/dashboard.php" << 'EOF'
 <?php
 require_once 'config.php';
@@ -283,16 +292,10 @@ redirectIfNotLoggedIn();
 
 $pdo = connectDB();
 
-// Obtener métricas del sistema
+// Obtener métricas
 $metrics = $pdo->query("SELECT * FROM system_metrics ORDER BY timestamp DESC LIMIT 1")->fetch(PDO::FETCH_ASSOC);
-
-// Contar usuarios activos
 $activeUsers = $pdo->query("SELECT COUNT(*) as count FROM users WHERE status = 'active'")->fetch(PDO::FETCH_ASSOC)['count'];
-
-// Contar instancias VPS
 $vpsCount = $pdo->query("SELECT COUNT(*) as count FROM vps_instances")->fetch(PDO::FETCH_ASSOC)['count'];
-
-// Obtener logs recientes
 $recentLogs = $pdo->query("SELECT l.*, u.username FROM logs l JOIN users u ON l.user_id = u.id ORDER BY l.timestamp DESC LIMIT 10")->fetchAll(PDO::FETCH_ASSOC);
 ?>
 <!DOCTYPE html>
@@ -301,8 +304,7 @@ $recentLogs = $pdo->query("SELECT l.*, u.username FROM logs l JOIN users u ON l.
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Dashboard - VPS Admin Panel</title>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2/dist/tailwind.min.css" rel="stylesheet">
+    <script src="https://cdn.tailwindcss.com"></script>
 </head>
 <body class="bg-gray-100">
     <nav class="bg-white shadow-lg">
@@ -328,7 +330,6 @@ $recentLogs = $pdo->query("SELECT l.*, u.username FROM logs l JOIN users u ON l.
     </nav>
 
     <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        <!-- Stats Cards -->
         <div class="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
             <div class="bg-white rounded-lg shadow p-6">
                 <div class="flex items-center">
@@ -343,7 +344,6 @@ $recentLogs = $pdo->query("SELECT l.*, u.username FROM logs l JOIN users u ON l.
                     </div>
                 </div>
             </div>
-
             <div class="bg-white rounded-lg shadow p-6">
                 <div class="flex items-center">
                     <div class="flex-shrink-0 bg-green-500 rounded-lg p-3">
@@ -357,7 +357,6 @@ $recentLogs = $pdo->query("SELECT l.*, u.username FROM logs l JOIN users u ON l.
                     </div>
                 </div>
             </div>
-
             <div class="bg-white rounded-lg shadow p-6">
                 <div class="flex items-center">
                     <div class="flex-shrink-0 bg-yellow-500 rounded-lg p-3">
@@ -371,7 +370,6 @@ $recentLogs = $pdo->query("SELECT l.*, u.username FROM logs l JOIN users u ON l.
                     </div>
                 </div>
             </div>
-
             <div class="bg-white rounded-lg shadow p-6">
                 <div class="flex items-center">
                     <div class="flex-shrink-0 bg-purple-500 rounded-lg p-3">
@@ -387,7 +385,6 @@ $recentLogs = $pdo->query("SELECT l.*, u.username FROM logs l JOIN users u ON l.
             </div>
         </div>
 
-        <!-- Logs Recientes -->
         <div class="bg-white rounded-lg shadow">
             <div class="px-6 py-4 border-b border-gray-200">
                 <h3 class="text-lg font-semibold text-gray-800">Actividad Reciente</h3>
@@ -416,241 +413,145 @@ $recentLogs = $pdo->query("SELECT l.*, u.username FROM logs l JOIN users u ON l.
             </div>
         </div>
     </div>
-
-    <script>
-        // Actualizar métricas cada 30 segundos
-        setInterval(function() {
-            fetch('/api/metrics.php')
-                .then(response => response.json())
-                .then(data => {
-                    console.log('Métricas actualizadas:', data);
-                });
-        }, 30000);
-    </script>
 </body>
 </html>
 EOF
 
+    # Logout
+    cat > "${PANEL_DIR}/logout.php" << 'EOF'
+<?php
+session_start();
+session_destroy();
+header('Location: login.php');
+exit();
+EOF
+
+    # Index
+    cat > "${PANEL_DIR}/index.php" << 'EOF'
+<?php
+session_start();
+if (isset($_SESSION['user_id']) && isset($_SESSION['logged_in']) && $_SESSION['logged_in'] === true) {
+    header('Location: dashboard.php');
+} else {
+    header('Location: login.php');
+}
+exit();
+EOF
+
+    chown -R ${APACHE_USER}:${APACHE_GROUP} ${PANEL_DIR}
+    chmod -R 755 ${PANEL_DIR}
+    
     print_color "Archivos del panel creados" "$GREEN"
 }
 
-setup_monitoring() {
-    print_color "Configurando sistema de monitoreo..." "$BLUE"
+# Configurar Apache para CentOS
+configure_apache_centos() {
+    print_color "Configurando Apache para CentOS..." "$BLUE"
     
-    # Script de monitoreo en Python
-    cat > "${PANEL_DIR}/monitor.py" << 'EOF'
-#!/usr/bin/env python3
-import psutil
-import sqlite3
-import time
-import json
-from datetime import datetime
+    # Configuración del virtual host
+    cat > /etc/httpd/conf.d/vps-panel.conf << EOF
+Listen ${PANEL_PORT}
 
-DB_PATH = '/var/www/vps-panel/data/vps_panel.db'
-
-def collect_metrics():
-    """Recolecta métricas del sistema"""
-    metrics = {
-        'cpu_usage': psutil.cpu_percent(interval=1),
-        'ram_usage': psutil.virtual_memory().percent,
-        'disk_usage': psutil.disk_usage('/').percent,
-        'network_rx': psutil.net_io_counters().bytes_recv,
-        'network_tx': psutil.net_io_counters().bytes_sent,
-        'active_connections': len(psutil.net_connections()),
-        'timestamp': datetime.now().isoformat()
-    }
-    return metrics
-
-def save_metrics(metrics):
-    """Guarda métricas en la base de datos"""
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    
-    cursor.execute('''
-        INSERT INTO system_metrics 
-        (cpu_usage, ram_usage, disk_usage, network_rx, network_tx, active_connections)
-        VALUES (?, ?, ?, ?, ?, ?)
-    ''', (
-        metrics['cpu_usage'],
-        metrics['ram_usage'],
-        metrics['disk_usage'],
-        metrics['network_rx'],
-        metrics['network_tx'],
-        metrics['active_connections']
-    ))
-    
-    conn.commit()
-    conn.close()
-
-def main():
-    while True:
-        try:
-            metrics = collect_metrics()
-            save_metrics(metrics)
-            time.sleep(60)  # Cada minuto
-        except Exception as e:
-            print(f"Error: {e}")
-            time.sleep(60)
-
-if __name__ == '__main__':
-    main()
-EOF
-    
-    chmod +x "${PANEL_DIR}/monitor.py"
-    
-    # Crear servicio systemd para el monitor
-    cat > /etc/systemd/system/vps-monitor.service << EOF
-[Unit]
-Description=VPS Monitor Service
-After=network.target
-
-[Service]
-Type=simple
-User=www-data
-ExecStart=/usr/bin/python3 ${PANEL_DIR}/monitor.py
-Restart=always
-RestartSec=10
-
-[Install]
-WantedBy=multi-user.target
-EOF
-    
-    systemctl daemon-reload
-    systemctl enable vps-monitor.service
-    systemctl start vps-monitor.service
-    
-    print_color "Sistema de monitoreo configurado" "$GREEN"
-}
-
-configure_apache() {
-    print_color "Configurando Apache..." "$BLUE"
-    
-    # Configurar virtual host
-    cat > /etc/apache2/sites-available/vps-panel.conf << EOF
 <VirtualHost *:${PANEL_PORT}>
     ServerAdmin admin@vpspanel.com
     DocumentRoot ${PANEL_DIR}
+    ServerName _default_
     
     <Directory ${PANEL_DIR}>
         Options Indexes FollowSymLinks
         AllowOverride All
         Require all granted
+        DirectoryIndex index.php login.php dashboard.php
     </Directory>
     
-    ErrorLog \${APACHE_LOG_DIR}/vps-panel-error.log
-    CustomLog \${APACHE_LOG_DIR}/vps-panel-access.log combined
+    ErrorLog /var/log/httpd/vps-panel-error.log
+    CustomLog /var/log/httpd/vps-panel-access.log combined
 </VirtualHost>
 
-Listen ${PANEL_PORT}
+<VirtualHost *:80>
+    ServerAdmin admin@vpspanel.com
+    ServerName _default_
+    Redirect permanent / http://%{SERVER_NAME}:${PANEL_PORT}/
+</VirtualHost>
 EOF
     
-    # Habilitar sitio y módulos
-    a2ensite vps-panel.conf
-    a2enmod rewrite
-    a2dissite 000-default.conf
+    # Configurar php.ini para sesiones
+    sed -i 's/session.save_path =.*/session.save_path = "\/var\/lib\/php\/session"/' /etc/php.ini
+    
+    # Crear directorio de sesiones
+    mkdir -p /var/lib/php/session
+    chown -R ${APACHE_USER}:${APACHE_GROUP} /var/lib/php/session
     
     # Configurar firewall
-    ufw allow ${PANEL_PORT}/tcp
-    ufw allow ssh
+    systemctl start firewalld 2>/dev/null || true
+    firewall-cmd --permanent --add-port=${PANEL_PORT}/tcp 2>/dev/null || true
+    firewall-cmd --permanent --add-service=http 2>/dev/null || true
+    firewall-cmd --reload 2>/dev/null || true
     
-    systemctl restart apache2
+    # Habilitar y arrancar Apache
+    systemctl enable httpd
+    systemctl restart httpd
     
     print_color "Apache configurado en puerto ${PANEL_PORT}" "$GREEN"
 }
 
-create_management_scripts() {
-    print_color "Creando scripts de gestión..." "$BLUE"
+# Script de monitoreo
+setup_monitoring() {
+    print_color "Configurando monitoreo..." "$BLUE"
     
-    # Script para crear usuarios
-    cat > /usr/local/bin/vps-create-user << 'EOF'
-#!/bin/bash
-# Script para crear usuarios en el panel
-
-if [ $# -lt 2 ]; then
-    echo "Uso: $0 <username> <password> [email]"
-    exit 1
-fi
-
-USERNAME=$1
-PASSWORD=$2
-EMAIL=${3:-"${USERNAME}@vpspanel.com"}
-
-# Hash de la contraseña
-HASHED_PASS=$(php -r "echo password_hash('$PASSWORD', PASSWORD_DEFAULT);")
-
-# Insertar en la base de datos
-sqlite3 /var/www/vps-panel/data/vps_panel.db \
-    "INSERT INTO users (username, password, email) VALUES ('$USERNAME', '$HASHED_PASS', '$EMAIL');"
-
-if [ $? -eq 0 ]; then
-    echo "✓ Usuario $USERNAME creado exitosamente"
-else
-    echo "✗ Error al crear el usuario"
-fi
-EOF
-
-    # Script para monitorear sistema
     cat > /usr/local/bin/vps-monitor << 'EOF'
 #!/bin/bash
-
-echo "=== VPS Monitor ==="
-echo "CPU Usage: $(top -bn1 | grep "Cpu(s)" | awk '{print $2}' | cut -d'%' -f1)%"
-echo "RAM Usage: $(free -m | awk 'NR==2{printf "%.2f%%", $3*100/$2}')"
-echo "Disk Usage: $(df -h / | awk 'NR==2{print $5}')"
-echo "Active Users: $(who | wc -l)"
-echo "Processes: $(ps aux | wc -l)"
-echo "Uptime: $(uptime -p)"
+echo "=== VPS MONITOR ==="
+echo "CPU: $(top -bn1 | grep "Cpu(s)" | awk '{print $2}' | cut -d'%' -f1)%"
+echo "RAM: $(free -m | awk 'NR==2{printf "%.2f%%", $3*100/$2}')"
+echo "DISK: $(df -h / | awk 'NR==2{print $5}')"
+echo "UPTIME: $(uptime -p)"
 EOF
-
-    chmod +x /usr/local/bin/vps-create-user
+    
     chmod +x /usr/local/bin/vps-monitor
     
-    print_color "Scripts de gestión creados" "$GREEN"
+    print_color "Monitoreo configurado" "$GREEN"
 }
 
-show_completion_info() {
+# Mostrar información final
+show_info() {
     clear
     print_color "=========================================" "$GREEN"
-    print_color "✅ PANEL DE ADMINISTRACIÓN VPS INSTALADO" "$GREEN"
+    print_color "✅ PANEL VPS INSTALADO CORRECTAMENTE" "$GREEN"
     print_color "=========================================" "$GREEN"
     echo ""
-    print_color "📊 Información de acceso:" "$BLUE"
-    print_color "   URL: http://$(curl -s ifconfig.me):${PANEL_PORT}" "$YELLOW"
+    
+    IP=$(curl -s ifconfig.me)
+    print_color "📊 ACCESO AL PANEL:" "$BLUE"
+    print_color "   URL: http://${IP}:${PANEL_PORT}" "$YELLOW"
     print_color "   Usuario: admin" "$YELLOW"
     print_color "   Contraseña: password" "$YELLOW"
     echo ""
-    print_color "📁 Directorios importantes:" "$BLUE"
-    print_color "   Panel: ${PANEL_DIR}" "$YELLOW"
-    print_color "   Base de datos: ${DB_FILE}" "$YELLOW"
-    print_color "   Logs: ${LOG_FILE}" "$YELLOW"
-    echo ""
-    print_color "🔧 Comandos útiles:" "$BLUE"
-    print_color "   Crear usuario: vps-create-user <username> <password>" "$YELLOW"
+    
+    print_color "🔧 COMANDOS ÚTILES:" "$BLUE"
+    print_color "   Ver estado: systemctl status httpd" "$YELLOW"
     print_color "   Ver monitoreo: vps-monitor" "$YELLOW"
-    print_color "   Ver logs: tail -f ${LOG_FILE}" "$YELLOW"
+    print_color "   Ver logs: tail -f /var/log/httpd/vps-panel-error.log" "$YELLOW"
     echo ""
-    print_color "⚠️  IMPORTANTE: Cambiar la contraseña del usuario admin después del primer inicio de sesión" "$RED"
-    echo ""
+    
+    print_color "⚠️  CAMBIA LA CONTRASEÑA DEL ADMIN EN EL PRIMER INICIO" "$RED"
 }
 
-# Función principal
+# Main
 main() {
-    check_root
-    clear
+    detect_os
     
-    print_color "=========================================" "$BLUE"
-    print_color "   INSTALADOR DE PANEL DE ADMINISTRACIÓN VPS" "$BLUE"
-    print_color "=========================================" "$BLUE"
-    echo ""
-    
-    install_dependencies
-    setup_database
-    create_panel_files
-    setup_monitoring
-    configure_apache
-    create_management_scripts
-    show_completion_info
+    if [ "$OS" = "centos" ]; then
+        install_dependencies_centos
+        setup_database
+        create_panel_files
+        configure_apache_centos
+        setup_monitoring
+        show_info
+    else
+        print_color "Usa el script para Debian/Ubuntu" "$RED"
+        exit 1
+    fi
 }
 
-# Ejecutar instalación
 main
