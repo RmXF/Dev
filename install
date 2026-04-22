@@ -1,0 +1,910 @@
+#!/bin/bash
+
+# Colores para output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m'
+
+echo -e "${BLUE}======================================${NC}"
+echo -e "${GREEN}   Sistema de Notificaciones Telegram${NC}"
+echo -e "${BLUE}======================================${NC}"
+
+# Verificar que se ejecute como root
+if [[ $EUID -ne 0 ]]; then
+   echo -e "${RED}Este script debe ejecutarse como root${NC}" 
+   exit 1
+fi
+
+# Actualizar sistema
+echo -e "${YELLOW}Actualizando sistema...${NC}"
+apt-get update -y && apt-get upgrade -y
+
+# Instalar dependencias
+echo -e "${YELLOW}Instalando dependencias...${NC}"
+apt-get install -y python3 python3-pip python3-venv nginx sqlite3 curl jq
+
+# Crear directorio de la aplicación
+mkdir -p /opt/notify-bot
+cd /opt/notify-bot
+
+# Crear entorno virtual
+python3 -m venv venv
+source venv/bin/activate
+
+# Instalar paquetes Python
+pip install flask flask-sqlalchemy flask-cors requests python-telegram-bot schedule
+
+# Crear estructura de directorios
+mkdir -p templates static/css static/js static/img
+
+# Configurar permisos
+chown -R www-data:www-data /opt/notify-bot
+chmod -R 755 /opt/notify-bot
+
+# Configurar servicio systemd
+cat > /etc/systemd/system/notify-bot.service << EOF
+[Unit]
+Description=Notify Bot Service
+After=network.target
+
+[Service]
+User=www-data
+Group=www-data
+WorkingDirectory=/opt/notify-bot
+ExecStart=/opt/notify-bot/venv/bin/python3 /opt/notify-bot/app.py
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+# Configurar Nginx
+cat > /etc/nginx/sites-available/notify-bot << EOF
+server {
+    listen 80;
+    server_name _;
+    
+    location / {
+        proxy_pass http://127.0.0.1:5000;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host \$host;
+        proxy_cache_bypass \$http_upgrade;
+    }
+}
+EOF
+
+ln -sf /etc/nginx/sites-available/notify-bot /etc/nginx/sites-enabled/
+rm -f /etc/nginx/sites-enabled/default
+
+# Crear archivo de configuración
+cat > /opt/notify-bot/config.json << EOF
+{
+    "bot_token": "",
+    "chat_id": ""
+}
+EOF
+
+# Crear el panel web y la API
+cat > /opt/notify-bot/app.py << 'EOF'
+from flask import Flask, render_template, request, jsonify, session
+from flask_sqlalchemy import SQLAlchemy
+from flask_cors import CORS
+from datetime import datetime, timedelta
+import requests
+import json
+import os
+import threading
+import time
+import schedule
+import subprocess
+
+app = Flask(__name__)
+app.secret_key = 'tu_clave_secreta_aqui_cambiar'
+CORS(app)
+
+# Configuración de la base de datos
+app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///notas.db'
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+db = SQLAlchemy(app)
+
+# Modelo de Notas
+class Nota(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    titulo = db.Column(db.String(200), nullable=False)
+    contenido = db.Column(db.Text, nullable=False)
+    fecha_hora = db.Column(db.DateTime, nullable=False)
+    enviado = db.Column(db.Boolean, default=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    telegram_respuesta = db.Column(db.Text, nullable=True)
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'titulo': self.titulo,
+            'contenido': self.contenido,
+            'fecha_hora': self.fecha_hora.strftime('%Y-%m-%d %H:%M:%S'),
+            'enviado': self.enviado,
+            'created_at': self.created_at.strftime('%Y-%m-%d %H:%M:%S')
+        }
+
+# Crear tablas
+with app.app_context():
+    db.create_all()
+
+# Cargar configuración
+def load_config():
+    try:
+        with open('/opt/notify-bot/config.json', 'r') as f:
+            return json.load(f)
+    except:
+        return {"bot_token": "", "chat_id": ""}
+
+def save_config(token, chat_id):
+    config = {"bot_token": token, "chat_id": chat_id}
+    with open('/opt/notify-bot/config.json', 'w') as f:
+        json.dump(config, f)
+
+# Función para enviar mensaje a Telegram
+def send_telegram_message(nota):
+    config = load_config()
+    if not config['bot_token'] or not config['chat_id']:
+        return "Bot no configurado"
+    
+    message = f"""
+📝 *NUEVA NOTA PENDIENTE*
+━━━━━━━━━━━━━━━━━━━
+*Título:* {nota.titulo}
+*Mensaje:* {nota.contenido}
+*Fecha/Hora:* {nota.fecha_hora.strftime('%d/%m/%Y %H:%M:%S')}
+━━━━━━━━━━━━━━━━━━━
+✅ *Recordatorio programado*
+    """
+    
+    url = f"https://api.telegram.org/bot{config['bot_token']}/sendMessage"
+    payload = {
+        'chat_id': config['chat_id'],
+        'text': message,
+        'parse_mode': 'Markdown'
+    }
+    
+    try:
+        response = requests.post(url, data=payload)
+        if response.status_code == 200:
+            nota.enviado = True
+            db.session.commit()
+            return "✅ Mensaje enviado"
+        else:
+            return f"❌ Error: {response.text}"
+    except Exception as e:
+        return f"❌ Error: {str(e)}"
+
+# Función para verificar notas pendientes
+def check_pending_notes():
+    with app.app_context():
+        ahora = datetime.now()
+        notas_pendientes = Nota.query.filter(
+            Nota.fecha_hora <= ahora,
+            Nota.enviado == False
+        ).all()
+        
+        for nota in notas_pendientes:
+            resultado = send_telegram_message(nota)
+            nota.telegram_respuesta = resultado
+            db.session.commit()
+
+# Programar verificación cada minuto
+def run_scheduler():
+    schedule.every(1).minutes.do(check_pending_notes)
+    while True:
+        schedule.run_pending()
+        time.sleep(1)
+
+# Iniciar scheduler en hilo separado
+scheduler_thread = threading.Thread(target=run_scheduler, daemon=True)
+scheduler_thread.start()
+
+# API Endpoints
+@app.route('/api/estado-vps')
+def estado_vps():
+    try:
+        # Obtener estadísticas del VPS
+        cpu = subprocess.check_output("top -bn1 | grep 'Cpu(s)' | awk '{print $2}' | cut -d'%' -f1", shell=True).decode().strip()
+        mem = subprocess.check_output("free -m | awk 'NR==2{printf \"%.2f\", $3*100/$2 }'", shell=True).decode().strip()
+        disk = subprocess.check_output("df -h / | awk 'NR==2{print $5}'", shell=True).decode().strip()
+        uptime = subprocess.check_output("uptime -p", shell=True).decode().strip()
+        
+        return jsonify({
+            'cpu': float(cpu),
+            'memoria': float(mem),
+            'disco': disk,
+            'uptime': uptime,
+            'status': 'ok'
+        })
+    except:
+        return jsonify({'status': 'error'})
+
+@app.route('/api/notas', methods=['GET'])
+def get_notas():
+    notas = Nota.query.order_by(Nota.fecha_hora.desc()).all()
+    return jsonify([n.to_dict() for n in notas])
+
+@app.route('/api/notas', methods=['POST'])
+def create_nota():
+    data = request.json
+    nota = Nota(
+        titulo=data['titulo'],
+        contenido=data['contenido'],
+        fecha_hora=datetime.strptime(data['fecha_hora'], '%Y-%m-%d %H:%M')
+    )
+    db.session.add(nota)
+    db.session.commit()
+    return jsonify(nota.to_dict()), 201
+
+@app.route('/api/notas/<int:id>', methods=['DELETE'])
+def delete_nota(id):
+    nota = Nota.query.get_or_404(id)
+    db.session.delete(nota)
+    db.session.commit()
+    return jsonify({'status': 'deleted'})
+
+@app.route('/api/configurar-bot', methods=['POST'])
+def configurar_bot():
+    data = request.json
+    save_config(data['token'], data['chat_id'])
+    
+    # Probar conexión
+    url = f"https://api.telegram.org/bot{data['token']}/getMe"
+    try:
+        response = requests.get(url)
+        if response.status_code == 200:
+            return jsonify({'status': 'success', 'message': 'Bot configurado correctamente'})
+        else:
+            return jsonify({'status': 'error', 'message': 'Token inválido'})
+    except:
+        return jsonify({'status': 'error', 'message': 'Error de conexión'})
+
+@app.route('/api/estadisticas')
+def estadisticas():
+    total = Nota.query.count()
+    enviadas = Nota.query.filter_by(enviado=True).count()
+    pendientes = Nota.query.filter_by(enviado=False).count()
+    return jsonify({
+        'total': total,
+        'enviadas': enviadas,
+        'pendientes': pendientes
+    })
+
+@app.route('/')
+def index():
+    return render_template('index.html')
+
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=5000, debug=False)
+EOF
+
+# Crear archivo HTML del panel
+cat > /opt/notify-bot/templates/index.html << 'EOF'
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NotifyBot - Panel de Control</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Inter', sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        /* Neumorphism Container */
+        .neumorphic {
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 50px;
+            box-shadow: 20px 20px 60px rgba(0,0,0,0.1),
+                       -20px -20px 60px rgba(255,255,255,0.8);
+            backdrop-filter: blur(10px);
+        }
+
+        .dashboard-card {
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 30px;
+            padding: 25px;
+            box-shadow: 10px 10px 30px rgba(0,0,0,0.1),
+                       -10px -10px 30px rgba(255,255,255,0.8);
+            transition: transform 0.3s ease;
+        }
+
+        .dashboard-card:hover {
+            transform: translateY(-5px);
+        }
+
+        /* Sidebar Menu */
+        .sidebar {
+            position: fixed;
+            left: -300px;
+            top: 0;
+            width: 300px;
+            height: 100%;
+            background: rgba(255, 255, 255, 0.98);
+            backdrop-filter: blur(20px);
+            box-shadow: 5px 0 30px rgba(0,0,0,0.1);
+            transition: left 0.3s ease;
+            z-index: 1000;
+            padding: 30px 20px;
+        }
+
+        .sidebar.active {
+            left: 0;
+        }
+
+        .menu-toggle {
+            position: fixed;
+            top: 20px;
+            left: 20px;
+            background: white;
+            border: none;
+            width: 50px;
+            height: 50px;
+            border-radius: 25px;
+            cursor: pointer;
+            box-shadow: 5px 5px 15px rgba(0,0,0,0.1);
+            z-index: 1001;
+            transition: all 0.3s ease;
+        }
+
+        .menu-toggle:hover {
+            transform: scale(1.1);
+        }
+
+        .menu-item {
+            padding: 15px 20px;
+            margin: 10px 0;
+            border-radius: 15px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+
+        .menu-item:hover {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            transform: translateX(10px);
+        }
+
+        /* Formularios */
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        .form-control {
+            width: 100%;
+            padding: 15px 20px;
+            border: none;
+            border-radius: 25px;
+            background: #f0f0f0;
+            font-size: 16px;
+            transition: all 0.3s ease;
+        }
+
+        .form-control:focus {
+            outline: none;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.3);
+        }
+
+        .btn {
+            padding: 12px 30px;
+            border: none;
+            border-radius: 25px;
+            cursor: pointer;
+            font-weight: 600;
+            transition: all 0.3s ease;
+            font-size: 16px;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 20px rgba(0,0,0,0.2);
+        }
+
+        /* Tabla de notas */
+        .notas-table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        .notas-table th,
+        .notas-table td {
+            padding: 15px;
+            text-align: left;
+            border-bottom: 1px solid #e0e0e0;
+        }
+
+        .notas-table tr:hover {
+            background: rgba(102, 126, 234, 0.1);
+        }
+
+        /* Animaciones */
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+                transform: translateY(20px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .content-section {
+            animation: fadeIn 0.5s ease;
+        }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            .dashboard-card {
+                margin-bottom: 20px;
+            }
+            
+            .notas-table {
+                font-size: 12px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <!-- Menu Toggle Button -->
+    <button class="menu-toggle" onclick="toggleMenu()">
+        <i class="fas fa-bars"></i>
+    </button>
+
+    <!-- Sidebar Menu -->
+    <div class="sidebar" id="sidebar">
+        <div style="text-align: center; margin-bottom: 30px;">
+            <i class="fas fa-bell" style="font-size: 50px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent;"></i>
+            <h2 style="margin-top: 10px;">NotifyBot</h2>
+        </div>
+        
+        <div class="menu-item" onclick="showSection('dashboard')">
+            <i class="fas fa-tachometer-alt"></i>
+            <span>Dashboard</span>
+        </div>
+        
+        <div class="menu-item" onclick="showSection('nueva-nota')">
+            <i class="fas fa-plus-circle"></i>
+            <span>Nueva Nota</span>
+        </div>
+        
+        <div class="menu-item" onclick="showSection('historial')">
+            <i class="fas fa-history"></i>
+            <span>Historial</span>
+        </div>
+        
+        <div class="menu-item" onclick="showSection('listado-notas')">
+            <i class="fas fa-list"></i>
+            <span>Listado de Notas</span>
+        </div>
+        
+        <div class="menu-item" onclick="showSection('configuracion')">
+            <i class="fas fa-cog"></i>
+            <span>Configuración</span>
+        </div>
+    </div>
+
+    <!-- Main Content -->
+    <div style="max-width: 1400px; margin: 0 auto; padding: 80px 20px 20px;">
+        <!-- Dashboard Section -->
+        <div id="dashboard" class="content-section">
+            <h1 style="color: white; margin-bottom: 30px;">Dashboard</h1>
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 25px; margin-bottom: 30px;">
+                <div class="dashboard-card">
+                    <i class="fas fa-chart-line" style="font-size: 40px; color: #667eea;"></i>
+                    <h3 style="margin: 15px 0 5px;">CPU</h3>
+                    <p class="stat-value" id="cpu-stat">0%</p>
+                </div>
+                <div class="dashboard-card">
+                    <i class="fas fa-memory" style="font-size: 40px; color: #764ba2;"></i>
+                    <h3 style="margin: 15px 0 5px;">Memoria RAM</h3>
+                    <p class="stat-value" id="mem-stat">0%</p>
+                </div>
+                <div class="dashboard-card">
+                    <i class="fas fa-hdd" style="font-size: 40px; color: #f093fb;"></i>
+                    <h3 style="margin: 15px 0 5px;">Disco</h3>
+                    <p class="stat-value" id="disk-stat">0%</p>
+                </div>
+                <div class="dashboard-card">
+                    <i class="fas fa-clock" style="font-size: 40px; color: #4facfe;"></i>
+                    <h3 style="margin: 15px 0 5px;">Uptime</h3>
+                    <p class="stat-value" id="uptime-stat">-</p>
+                </div>
+            </div>
+            
+            <div class="dashboard-card">
+                <h3>Estadísticas de Notas</h3>
+                <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; margin-top: 20px;">
+                    <div style="text-align: center;">
+                        <h2 id="total-notas">0</h2>
+                        <p>Total Notas</p>
+                    </div>
+                    <div style="text-align: center;">
+                        <h2 id="enviadas-notas">0</h2>
+                        <p>Enviadas</p>
+                    </div>
+                    <div style="text-align: center;">
+                        <h2 id="pendientes-notas">0</h2>
+                        <p>Pendientes</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Nueva Nota Section -->
+        <div id="nueva-nota" class="content-section" style="display: none;">
+            <div class="dashboard-card">
+                <h2><i class="fas fa-plus-circle"></i> Crear Nueva Nota</h2>
+                <form id="nota-form" style="margin-top: 30px;">
+                    <div class="form-group">
+                        <input type="text" id="titulo" class="form-control" placeholder="Título de la nota" required>
+                    </div>
+                    <div class="form-group">
+                        <textarea id="contenido" class="form-control" rows="5" placeholder="Contenido de la nota" required></textarea>
+                    </div>
+                    <div class="form-group">
+                        <input type="datetime-local" id="fecha_hora" class="form-control" required>
+                    </div>
+                    <button type="submit" class="btn btn-primary">Guardar Nota</button>
+                </form>
+            </div>
+        </div>
+
+        <!-- Historial Section -->
+        <div id="historial" class="content-section" style="display: none;">
+            <div class="dashboard-card">
+                <h2><i class="fas fa-history"></i> Historial de Notas</h2>
+                <div id="historial-content"></div>
+            </div>
+        </div>
+
+        <!-- Listado Notas Section -->
+        <div id="listado-notas" class="content-section" style="display: none;">
+            <div class="dashboard-card">
+                <h2><i class="fas fa-list"></i> Listado de Notas</h2>
+                <div id="listado-content"></div>
+            </div>
+        </div>
+
+        <!-- Configuración Section -->
+        <div id="configuracion" class="content-section" style="display: none;">
+            <div class="dashboard-card">
+                <h2><i class="fas fa-robot"></i> Configurar Bot de Telegram</h2>
+                <form id="bot-form" style="margin-top: 30px;">
+                    <div class="form-group">
+                        <label>Token del Bot</label>
+                        <input type="text" id="bot-token" class="form-control" placeholder="Ej: 1234567890:ABCdefGHIjklmNOPqrstUvWXyz" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Chat ID</label>
+                        <input type="text" id="chat-id" class="form-control" placeholder="Tu Chat ID de Telegram" required>
+                    </div>
+                    <button type="submit" class="btn btn-primary">Guardar Configuración</button>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Función para toggle del menú
+        function toggleMenu() {
+            document.getElementById('sidebar').classList.toggle('active');
+        }
+
+        // Mostrar sección seleccionada
+        function showSection(section) {
+            const sections = ['dashboard', 'nueva-nota', 'historial', 'listado-notas', 'configuracion'];
+            sections.forEach(s => {
+                document.getElementById(s).style.display = 'none';
+            });
+            document.getElementById(section).style.display = 'block';
+            document.getElementById('sidebar').classList.remove('active');
+            
+            if (section === 'dashboard') {
+                loadDashboard();
+            } else if (section === 'historial') {
+                loadHistorial();
+            } else if (section === 'listado-notas') {
+                loadListado();
+            }
+        }
+
+        // Cargar Dashboard
+        async function loadDashboard() {
+            try {
+                // Cargar estado VPS
+                const estadoResp = await fetch('/api/estado-vps');
+                const estado = await estadoResp.json();
+                document.getElementById('cpu-stat').textContent = estado.cpu + '%';
+                document.getElementById('mem-stat').textContent = estado.memoria + '%';
+                document.getElementById('disk-stat').textContent = estado.disco;
+                document.getElementById('uptime-stat').textContent = estado.uptime;
+                
+                // Cargar estadísticas de notas
+                const statsResp = await fetch('/api/estadisticas');
+                const stats = await statsResp.json();
+                document.getElementById('total-notas').textContent = stats.total;
+                document.getElementById('enviadas-notas').textContent = stats.enviadas;
+                document.getElementById('pendientes-notas').textContent = stats.pendientes;
+            } catch (error) {
+                console.error('Error cargando dashboard:', error);
+            }
+        }
+
+        // Cargar Historial
+        async function loadHistorial() {
+            try {
+                const resp = await fetch('/api/notas');
+                const notas = await resp.json();
+                const historial = notas.filter(n => n.enviado === true);
+                
+                let html = '<div style="overflow-x: auto;"><table class="notas-table"><thead><tr><th>Título</th><th>Contenido</th><th>Fecha/Hora</th><th>Enviado</th></tr></thead><tbody>';
+                historial.forEach(nota => {
+                    html += `<tr>
+                        <td>${nota.titulo}</td>
+                        <td>${nota.contenido.substring(0, 50)}...</td>
+                        <td>${nota.fecha_hora}</td>
+                        <td><span style="color: green;">✓ Enviado</span></td>
+                    </tr>`;
+                });
+                html += '</tbody></table></div>';
+                document.getElementById('historial-content').innerHTML = html || '<p>No hay notas en el historial</p>';
+            } catch (error) {
+                console.error('Error cargando historial:', error);
+            }
+        }
+
+        // Cargar Listado
+        async function loadListado() {
+            try {
+                const resp = await fetch('/api/notas');
+                const notas = await resp.json();
+                
+                let html = '<div style="overflow-x: auto;"><table class="notas-table"><thead><tr><th>Título</th><th>Contenido</th><th>Fecha/Hora</th><th>Estado</th><th>Acciones</th></tr></thead><tbody>';
+                notas.forEach(nota => {
+                    html += `<tr>
+                        <td>${nota.titulo}</td>
+                        <td>${nota.contenido.substring(0, 50)}...</td>
+                        <td>${nota.fecha_hora}</td>
+                        <td>${nota.enviado ? '<span style="color: green;">✓ Enviado</span>' : '<span style="color: orange;">⏳ Pendiente</span>'}</td>
+                        <td><button onclick="eliminarNota(${nota.id})" class="btn" style="background: #ff4757; color: white; padding: 5px 10px;">Eliminar</button></td>
+                    </tr>`;
+                });
+                html += '</tbody></table></div>';
+                document.getElementById('listado-content').innerHTML = html || '<p>No hay notas creadas</p>';
+            } catch (error) {
+                console.error('Error cargando listado:', error);
+            }
+        }
+
+        // Eliminar nota
+        async function eliminarNota(id) {
+            if (confirm('¿Estás seguro de eliminar esta nota?')) {
+                await fetch(`/api/notas/${id}`, { method: 'DELETE' });
+                loadListado();
+                loadDashboard();
+            }
+        }
+
+        // Crear nota
+        document.getElementById('nota-form').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const nota = {
+                titulo: document.getElementById('titulo').value,
+                contenido: document.getElementById('contenido').value,
+                fecha_hora: document.getElementById('fecha_hora').value
+            };
+            
+            const resp = await fetch('/api/notas', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(nota)
+            });
+            
+            if (resp.ok) {
+                alert('Nota creada exitosamente');
+                e.target.reset();
+                loadDashboard();
+            }
+        });
+
+        // Configurar bot
+        document.getElementById('bot-form').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const config = {
+                token: document.getElementById('bot-token').value,
+                chat_id: document.getElementById('chat-id').value
+            };
+            
+            const resp = await fetch('/api/configurar-bot', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(config)
+            });
+            
+            const result = await resp.json();
+            alert(result.message);
+        });
+
+        // Auto-refresh dashboard cada 30 segundos
+        setInterval(() => {
+            if (document.getElementById('dashboard').style.display !== 'none') {
+                loadDashboard();
+            }
+        }, 30000);
+        
+        // Cargar dashboard inicial
+        loadDashboard();
+    </script>
+</body>
+</html>
+EOF
+
+# Crear script de configuración del bot
+cat > /opt/notify-bot/bot_config.sh << 'EOF'
+#!/bin/bash
+
+# Colores
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+BLUE='\033[0;34m'
+NC='\033[0m'
+
+echo -e "${BLUE}======================================${NC}"
+echo -e "${GREEN}   Configuración del Bot Telegram${NC}"
+echo -e "${BLUE}======================================${NC}"
+
+read -p "Ingresa el Token de tu Bot de Telegram: " BOT_TOKEN
+read -p "Ingresa tu Chat ID de Telegram: " CHAT_ID
+
+# Guardar configuración
+cat > /opt/notify-bot/config.json << EOF
+{
+    "bot_token": "$BOT_TOKEN",
+    "chat_id": "$CHAT_ID"
+}
+EOF
+
+echo -e "${GREEN}✓ Configuración guardada exitosamente${NC}"
+
+# Probar conexión
+echo -e "${BLUE}Probando conexión con Telegram...${NC}"
+curl -s "https://api.telegram.org/bot$BOT_TOKEN/getMe" > /dev/null
+
+if [ $? -eq 0 ]; then
+    echo -e "${GREEN}✓ Bot conectado correctamente${NC}"
+else
+    echo -e "${RED}✗ Error al conectar con el bot${NC}"
+fi
+
+# Reiniciar servicio
+systemctl restart notify-bot
+echo -e "${GREEN}✓ Servicio reiniciado${NC}"
+EOF
+
+chmod +x /opt/notify-bot/bot_config.sh
+
+# Crear script de menú
+cat > /opt/notify-bot/menu.sh << 'EOF'
+#!/bin/bash
+
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m'
+
+while true; do
+    clear
+    echo -e "${BLUE}╔══════════════════════════════════════╗${NC}"
+    echo -e "${BLUE}║     NOTIFYBOT - MENÚ PRINCIPAL       ║${NC}"
+    echo -e "${BLUE}╚══════════════════════════════════════╝${NC}"
+    echo ""
+    echo -e "${GREEN}1.${NC} Configurar Bot de Telegram"
+    echo -e "${GREEN}2.${NC} Ver estado del servicio"
+    echo -e "${GREEN}3.${NC} Reiniciar servicio"
+    echo -e "${GREEN}4.${NC} Ver logs"
+    echo -e "${GREEN}5.${NC} Abrir panel web"
+    echo -e "${GREEN}6.${NC} Ver información del sistema"
+    echo -e "${RED}7.${NC} Salir"
+    echo ""
+    read -p "Selecciona una opción: " opcion
+
+    case $opcion in
+        1)
+            /opt/notify-bot/bot_config.sh
+            read -p "Presiona Enter para continuar..."
+            ;;
+        2)
+            systemctl status notify-bot
+            read -p "Presiona Enter para continuar..."
+            ;;
+        3)
+            systemctl restart notify-bot
+            echo -e "${GREEN}Servicio reiniciado${NC}"
+            read -p "Presiona Enter para continuar..."
+            ;;
+        4)
+            journalctl -u notify-bot -n 50 --no-pager
+            read -p "Presiona Enter para continuar..."
+            ;;
+        5)
+            IP=$(curl -s ifconfig.me)
+            echo -e "${GREEN}Panel web disponible en: http://$IP${NC}"
+            read -p "Presiona Enter para continuar..."
+            ;;
+        6)
+            echo -e "${BLUE}Información del sistema:${NC}"
+            echo "CPU: $(top -bn1 | grep 'Cpu(s)' | awk '{print $2}')%"
+            echo "RAM: $(free -h | awk 'NR==2{print $3"/"$2}')"
+            echo "Disco: $(df -h / | awk 'NR==2{print $5}')"
+            echo "Uptime: $(uptime -p)"
+            read -p "Presiona Enter para continuar..."
+            ;;
+        7)
+            echo -e "${GREEN}¡Hasta luego!${NC}"
+            exit 0
+            ;;
+        *)
+            echo -e "${RED}Opción inválida${NC}"
+            sleep 2
+            ;;
+    esac
+done
+EOF
+
+chmod +x /opt/notify-bot/menu.sh
+
+# Iniciar servicios
+systemctl daemon-reload
+systemctl enable notify-bot
+systemctl start notify-bot
+systemctl restart nginx
+
+# Limpiar
+clear
+
+echo -e "${GREEN}======================================${NC}"
+echo -e "${GREEN}¡Instalación completada exitosamente!${NC}"
+echo -e "${GREEN}======================================${NC}"
+echo ""
+echo -e "${YELLOW}Para configurar el bot, ejecuta:${NC}"
+echo -e "${BLUE}/opt/notify-bot/menu.sh${NC}"
+echo ""
+echo -e "${YELLOW}Para acceder al panel web:${NC}"
+IP=$(curl -s ifconfig.me)
+echo -e "${BLUE}http://$IP${NC}"
+echo ""
+echo -e "${YELLOW}Credenciales por defecto:${NC}"
+echo -e "Usuario: admin"
+echo -e "Contraseña: admin123"
+echo ""
+echo -e "${RED}¡IMPORTANTE! Cambia la contraseña después del primer inicio${NC}"
