@@ -17,15 +17,15 @@ echo "Limpiando directorio web..."
 rm -rf *
 
 echo "Descargando sitio desde GitHub..."
-wget https://raw.githubusercontent.com/RmXF/Dev/main/moda.zip
+wget https://raw.githubusercontent.com/RmXF/Dev/main/afmoda.zip
 
 echo "Descomprimiendo sitio..."
-unzip moda.zip
+unzip afmoda.zip
 
 echo "Moviendo archivos..."
 cp -r * /var/www/html/ 2>/dev/null
 
-rm moda.zip
+rm afmoda.zip
 
 systemctl restart nginx
 
