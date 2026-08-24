@@ -73,8 +73,8 @@ install_site() {
     echo ""
     
     echo -e "${CYAN}📝 Ingresa el enlace del archivo index.html:${NC}"
-    echo -e "${YELLOW}💡 Ejemplo: https://ejemplo.com/mi-index.html${NC}"
-    echo -e "${YELLOW}💡 O desde GitHub: https://raw.githubusercontent.com/usuario/repo/main/index.html${NC}"
+    echo -e "${YELLOW}💡 Ejemplo: https://raw.githubusercontent.com/RmXF/Dev/refs/heads/main/index.html${NC}"
+    echo -e "${YELLOW}💡 O desde GitHub: https://raw.githubusercontent.com/RmXF/Dev/refs/heads/main/index.html${NC}"
     echo ""
     read -p "➜ URL: " file_url
     
