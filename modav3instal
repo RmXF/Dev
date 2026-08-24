@@ -1,0 +1,528 @@
+#!/bin/bash
+
+# ============================================
+# GESTOR SITIO WEB AF-MODAS (Versión Archivo Único)
+# Todo está en index.html (HTML + CSS + JS + Products)
+# Comando: moda
+# ============================================
+
+# Colores
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+PURPLE='\033[0;35m'
+CYAN='\033[0;36m'
+WHITE='\033[1;37m'
+NC='\033[0m'
+
+# Directorio base
+WEB_DIR="/var/www/html"
+BACKUP_DIR="$WEB_DIR/backups"
+
+# ============================================
+# FUNCIONES
+# ============================================
+
+show_banner() {
+    clear
+    echo -e "${PURPLE}╔══════════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${PURPLE}║${NC}                                                          ${PURPLE}║${NC}"
+    echo -e "${PURPLE}║${NC}         ${WHITE}██╗  ██╗███████╗ ██████╗ ██████╗ █████╗ ███████╗${NC}  ${PURPLE}║${NC}"
+    echo -e "${PURPLE}║${NC}         ${WHITE}██║  ██║██╔════╝██╔═══██╗██╔══██╗██╔══██╗██╔════╝${NC}  ${PURPLE}║${NC}"
+    echo -e "${PURPLE}║${NC}         ${WHITE}███████║█████╗  ██║   ██║██║  ██║███████║███████╗${NC}  ${PURPLE}║${NC}"
+    echo -e "${PURPLE}║${NC}         ${WHITE}██╔══██║██╔══╝  ██║   ██║██║  ██║██╔══██║╚════██║${NC}  ${PURPLE}║${NC}"
+    echo -e "${PURPLE}║${NC}         ${WHITE}██║  ██║██║     ╚██████╔╝██████╔╝██║  ██║███████║${NC}  ${PURPLE}║${NC}"
+    echo -e "${PURPLE}║${NC}         ${WHITE}╚═╝  ╚═╝╚═╝      ╚═════╝ ╚═════╝ ╚═╝  ╚═╝╚══════╝${NC}  ${PURPLE}║${NC}"
+    echo -e "${PURPLE}║${NC}                                                          ${PURPLE}║${NC}"
+    echo -e "${PURPLE}║${NC}              ${CYAN}GESTOR AF-MODAS${NC}                            ${PURPLE}║${NC}"
+    echo -e "${PURPLE}║${NC}         ${YELLOW}📄 Versión: Archivo Único (index.html)${NC}          ${PURPLE}║${NC}"
+    echo -e "${PURPLE}╚══════════════════════════════════════════════════════════════╝${NC}"
+    echo ""
+}
+
+show_menu() {
+    show_banner
+    echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -e "${WHITE}                      MENÚ PRINCIPAL${NC}"
+    echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo ""
+    echo -e "  ${GREEN}1)${NC} 🚀 Instalar sitio (descargar index.html)"
+    echo -e "  ${GREEN}2)${NC} 📄 Actualizar index.html completo"
+    echo -e "  ${GREEN}3)${NC} ➕ Agregar nueva prenda (editar products.js dentro del HTML)"
+    echo -e "  ${GREEN}4)${NC} 🔍 Ver productos actuales"
+    echo -e "  ${GREEN}5)${NC} 📊 Ver estado del sitio"
+    echo -e "  ${GREEN}6)${NC} 💾 Respaldar index.html"
+    echo -e "  ${GREEN}7)${NC} 🔁 Restaurar respaldo"
+    echo -e "  ${GREEN}8)${NC} 📝 Editar index.html manualmente (nano)"
+    echo -e "  ${RED}9)${NC} 🚪 Salir"
+    echo ""
+    echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -ne "${YELLOW}➜ Selecciona una opción [1-9]: ${NC}"
+}
+
+# ============================================
+# FUNCIÓN: Instalar sitio
+# ============================================
+install_site() {
+    clear
+    show_banner
+    echo -e "${BLUE}╔══════════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${BLUE}║${NC}              🚀 INSTALAR SITIO WEB                      ${BLUE}║${NC}"
+    echo -e "${BLUE}╚══════════════════════════════════════════════════════════════╝${NC}"
+    echo ""
+    
+    echo -e "${CYAN}📝 Ingresa el enlace del archivo index.html:${NC}"
+    echo -e "${YELLOW}💡 Ejemplo: https://ejemplo.com/mi-index.html${NC}"
+    echo -e "${YELLOW}💡 O desde GitHub: https://raw.githubusercontent.com/usuario/repo/main/index.html${NC}"
+    echo ""
+    read -p "➜ URL: " file_url
+    
+    if [ -z "$file_url" ]; then
+        echo -e "${RED}❌ URL vacía${NC}"
+        sleep 2
+        return
+    fi
+    
+    echo ""
+    echo -e "${YELLOW}📦 Instalando dependencias...${NC}"
+    apt update -y > /dev/null 2>&1
+    apt install nginx wget curl -y > /dev/null 2>&1
+    
+    systemctl start nginx > /dev/null 2>&1
+    systemctl enable nginx > /dev/null 2>&1
+    
+    echo -e "${YELLOW}📁 Preparando directorio...${NC}"
+    mkdir -p $WEB_DIR
+    cd $WEB_DIR
+    
+    # Limpiar solo index.html (mantener backups)
+    find . -maxdepth 1 -type f ! -name "*.bak" ! -name "backups" -exec rm -f {} \;
+    
+    echo -e "${YELLOW}📥 Descargando index.html...${NC}"
+    wget -q -O index.html "$file_url"
+    
+    if [ $? -eq 0 ] && [ -f "index.html" ]; then
+        echo -e "${GREEN}✅ index.html descargado correctamente${NC}"
+        
+        # Verificar que tiene contenido
+        if [ ! -s "index.html" ]; then
+            echo -e "${RED}❌ El archivo está vacío${NC}"
+            rm -f index.html
+            sleep 2
+            return
+        fi
+        
+        # Crear directorio de backups
+        mkdir -p $BACKUP_DIR
+        
+        # Establecer permisos
+        chown -R www-data:www-data $WEB_DIR
+        chmod -R 755 $WEB_DIR
+        
+        systemctl restart nginx
+        
+        clear
+        show_banner
+        echo -e "${GREEN}╔══════════════════════════════════════════════════════════════╗${NC}"
+        echo -e "${GREEN}║${NC}              ✅ SITIO INSTALADO CORRECTAMENTE            ${GREEN}║${NC}"
+        echo -e "${GREEN}╚══════════════════════════════════════════════════════════════╝${NC}"
+        echo ""
+        echo -e "${CYAN}🌐 Abre en tu navegador:${NC}"
+        echo -e "${WHITE}   http://$(curl -s ifconfig.me)${NC}"
+        echo ""
+        echo -e "${CYAN}📁 Archivo instalado:${NC}"
+        ls -lh $WEB_DIR/index.html | awk '{print "   " $9 " - " $5}'
+        
+        # Mostrar cuántos productos tiene
+        count=$(grep -c "id:" $WEB_DIR/index.html 2>/dev/null || echo "0")
+        echo -e "${CYAN}📊 Productos encontrados:${NC} ${WHITE}$count${NC}"
+        
+    else
+        echo -e "${RED}❌ Error al descargar el archivo${NC}"
+        echo -e "${YELLOW}💡 Verifica que la URL sea correcta y accesible${NC}"
+    fi
+    
+    echo ""
+    read -p "Presiona Enter para continuar..."
+}
+
+# ============================================
+# FUNCIÓN: Actualizar index.html completo
+# ============================================
+update_index() {
+    clear
+    show_banner
+    echo -e "${BLUE}╔══════════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${BLUE}║${NC}              📄 ACTUALIZAR INDEX.HTML                   ${BLUE}║${NC}"
+    echo -e "${BLUE}╚══════════════════════════════════════════════════════════════╝${NC}"
+    echo ""
+    
+    if [ ! -f "$WEB_DIR/index.html" ]; then
+        echo -e "${RED}❌ No hay index.html instalado${NC}"
+        echo -e "${YELLOW}💡 Primero instala el sitio (opción 1)${NC}"
+        sleep 2
+        return
+    fi
+    
+    echo -e "${CYAN}📝 Ingresa el enlace del nuevo index.html:${NC}"
+    echo -e "${YELLOW}💡 Ejemplo: https://ejemplo.com/nuevo-index.html${NC}"
+    echo ""
+    read -p "➜ URL: " file_url
+    
+    if [ -z "$file_url" ]; then
+        echo -e "${RED}❌ URL vacía${NC}"
+        sleep 2
+        return
+    fi
+    
+    cd $WEB_DIR
+    
+    # Backup automático
+    timestamp=$(date +"%Y%m%d_%H%M%S")
+    cp index.html "index_backup_$timestamp.html"
+    echo -e "${GREEN}💾 Backup creado: index_backup_$timestamp.html${NC}"
+    
+    echo -e "${YELLOW}📥 Descargando nuevo index.html...${NC}"
+    wget -q -O index.html "$file_url"
+    
+    if [ $? -eq 0 ] && [ -f "index.html" ] && [ -s "index.html" ]; then
+        echo -e "${GREEN}✅ index.html actualizado correctamente${NC}"
+        
+        # Notificar cambio para actualización automática
+        touch last_update.txt
+        
+        chown -R www-data:www-data $WEB_DIR
+        systemctl restart nginx
+        
+        # Mostrar información del nuevo archivo
+        size=$(du -h index.html | cut -f1)
+        products=$(grep -c "id:" index.html 2>/dev/null || echo "0")
+        echo ""
+        echo -e "${CYAN}📊 Nuevo archivo:${NC}"
+        echo -e "   Tamaño: ${WHITE}$size${NC}"
+        echo -e "   Productos: ${WHITE}$products${NC}"
+        
+    else
+        echo -e "${RED}❌ Error al descargar. Restaurando backup...${NC}"
+        mv "index_backup_$timestamp.html" index.html
+        echo -e "${GREEN}✅ Backup restaurado${NC}"
+    fi
+    
+    echo ""
+    read -p "Presiona Enter para continuar..."
+}
+
+# ============================================
+# FUNCIÓN: Agregar nueva prenda (editar dentro del HTML)
+# ============================================
+add_product() {
+    clear
+    show_banner
+    echo -e "${BLUE}╔══════════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${BLUE}║${NC}              ➕ AGREGAR NUEVA PRENDA                    ${BLUE}║${NC}"
+    echo -e "${BLUE}╚══════════════════════════════════════════════════════════════╝${NC}"
+    echo ""
+    
+    if [ ! -f "$WEB_DIR/index.html" ]; then
+        echo -e "${RED}❌ No hay index.html instalado${NC}"
+        echo -e "${YELLOW}💡 Primero instala el sitio (opción 1)${NC}"
+        sleep 2
+        return
+    fi
+    
+    echo -e "${CYAN}📝 Ingresa los datos de la nueva prenda:${NC}"
+    echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo ""
+    
+    # Recolectar datos
+    while true; do
+        read -p "ID del producto (número): " id
+        if [[ "$id" =~ ^[0-9]+$ ]]; then break
+        else echo -e "${RED}❌ ID debe ser un número${NC}"
+        fi
+    done
+    
+    read -p "Nombre: " name
+    while [[ -z "$name" ]]; do
+        echo -e "${RED}❌ El nombre es obligatorio${NC}"
+        read -p "Nombre: " name
+    done
+    
+    echo -e "${YELLOW}Categorías: Hombre, Mujer, Accesorios${NC}"
+    read -p "Categoría: " category
+    read -p "Subcategoría (ej: Remeras): " subcategory
+    read -p "Tipo (ej: Oversize): " type
+    
+    while true; do
+        read -p "Precio (sin puntos, ej: 24999): " price
+        if [[ "$price" =~ ^[0-9]+$ ]]; then break
+        else echo -e "${RED}❌ Precio debe ser un número${NC}"
+        fi
+    done
+    
+    read -p "Precio anterior (opcional): " old_price
+    read -p "Etiqueta (NUEVO/DESTACADO/OFERTA): " badge
+    read -p "Descripción breve: " description
+    read -p "Talles (separados por coma, ej: S,M,L,XL): " sizes_input
+    
+    read -p "¿Es destacado? (si/no): " featured_input
+    while true; do
+        read -p "Stock disponible: " stock
+        if [[ "$stock" =~ ^[0-9]+$ ]]; then break
+        else echo -e "${RED}❌ Stock debe ser un número${NC}"
+        fi
+    done
+    
+    # Formatear datos
+    sizes_array=$(echo "$sizes_input" | sed 's/,/","/g')
+    featured=$([ "$featured_input" = "si" ] && echo "true" || echo "false")
+    old_price_formatted=$([ -z "$old_price" ] && echo "null" || echo "$old_price")
+    
+    # Crear el nuevo producto en formato JS
+    new_product="
+    {
+        id: $id,
+        name: \"$name\",
+        category: \"$category\",
+        subcategory: \"$subcategory\",
+        type: \"$type\",
+        price: $price,
+        oldPrice: $old_price_formatted,
+        badge: \"$badge\",
+        image: \"https://placehold.co/600x800/25222d/a78bfa?text=AF+MODA\",
+        description: \"$description\",
+        sizes: [\"$sizes_array\"],
+        featured: $featured,
+        stock: $stock,
+        active: true
+    }"
+    
+    echo ""
+    echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -e "${YELLOW}📋 Resumen de la prenda:${NC}"
+    echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo "$new_product"
+    echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo ""
+    read -p "¿Confirmar y agregar al catálogo? (s/n): " confirm
+    
+    if [ "$confirm" != "s" ]; then
+        echo -e "${YELLOW}⏹ Operación cancelada${NC}"
+        sleep 2
+        return
+    fi
+    
+    cd $WEB_DIR
+    
+    # Backup del index.html
+    cp index.html index.html.bak
+    echo -e "${GREEN}💾 Backup creado: index.html.bak${NC}"
+    
+    # Buscar el array de productos y agregar el nuevo
+    # Primero, encontrar dónde comienza el array products
+    # Buscar "const products = [" o "products = ["
+    
+    # Estrategia: Buscar la línea que contiene "const products" o "products" y el corchete de apertura
+    # Luego insertar antes del último corchete de cierre "];"
+    
+    # Usar sed para insertar el nuevo producto antes del último ]; del array
+    # Pero necesitamos asegurarnos de no romper la estructura
+    
+    # Buscar el patrón del array de productos
+    if grep -q "const products = \[" index.html; then
+        # Estilo: const products = [
+        sed -i "/const products = \[/!b; :a; /];/!{N; ba}; s/];$/${new_product}\n];/" index.html
+        echo -e "${GREEN}✅ Producto agregado (const products)${NC}"
+    elif grep -q "products = \[" index.html; then
+        # Estilo: products = [
+        sed -i "/products = \[/!b; :a; /];/!{N; ba}; s/];$/${new_product}\n];/" index.html
+        echo -e "${GREEN}✅ Producto agregado (products =)${NC}"
+    elif grep -q "\[" index.html && grep -q "id:" index.html; then
+        # Buscar el array por su contenido
+        # Estrategia: Buscar la última ocurrencia de "id:" y agregar después
+        # Esto es más complejo, usar un enfoque más simple
+        sed -i "s/];$/${new_product}\n];/" index.html
+        echo -e "${GREEN}✅ Producto agregado (búsqueda general)${NC}"
+    else
+        echo -e "${RED}❌ No se pudo encontrar el array de productos en index.html${NC}"
+        echo -e "${YELLOW}💡 Verifica que el archivo contenga 'const products = [' o 'products = ['${NC}"
+        mv index.html.bak index.html
+        sleep 3
+        return
+    fi
+    
+    # Verificar que se haya agregado correctamente
+    if [ $? -eq 0 ]; then
+        echo -e "${GREEN}✅ ¡Producto agregado exitosamente!${NC}"
+        
+        # Notificar cambio para actualización automática
+        touch last_update.txt
+        
+        # Restaurar permisos
+        chown -R www-data:www-data $WEB_DIR
+        
+        # Reiniciar Nginx para asegurar cambios
+        systemctl restart nginx
+        
+        echo ""
+        echo -e "${CYAN}📦 Nuevo producto añadido al catálogo${NC}"
+        echo -e "${YELLOW}🌐 Actualiza la página para ver el cambio${NC}"
+        
+        # Mostrar cantidad actual de productos
+        count=$(grep -c "id:" index.html 2>/dev/null || echo "0")
+        echo -e "${CYAN}📊 Total de productos:${NC} ${WHITE}$count${NC}"
+    else
+        echo -e "${RED}❌ Error al agregar el producto${NC}"
+        echo -e "${YELLOW}🔄 Restaurando backup...${NC}"
+        mv index.html.bak index.html
+    fi
+    
+    echo ""
+    read -p "Presiona Enter para continuar..."
+}
+
+# ============================================
+# FUNCIÓN: Ver productos actuales
+# ============================================
+view_products() {
+    clear
+    show_banner
+    echo -e "${BLUE}╔══════════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${BLUE}║${NC}              🔍 PRODUCTOS ACTUALES                     ${BLUE}║${NC}"
+    echo -e "${BLUE}╚══════════════════════════════════════════════════════════════╝${NC}"
+    echo ""
+    
+    if [ ! -f "$WEB_DIR/index.html" ]; then
+        echo -e "${RED}❌ No hay index.html instalado${NC}"
+        sleep 2
+        return
+    fi
+    
+    cd $WEB_DIR
+    
+    # Contar productos
+    count=$(grep -c "id:" index.html 2>/dev/null || echo "0")
+    echo -e "${CYAN}📊 Total de productos:${NC} ${WHITE}$count${NC}"
+    echo ""
+    
+    if [ "$count" -eq 0 ]; then
+        echo -e "${YELLOW}⚠️ No se encontraron productos en el archivo${NC}"
+    else
+        echo -e "${CYAN}📋 Lista de productos:${NC}"
+        echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+        
+        # Extraer y mostrar productos de manera legible
+        # Buscar líneas con name, price, category
+        grep -E "(name:|price:|category:)" index.html | head -30 | sed 's/^[ \t]*//' | sed 's/,//g'
+        
+        echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+        echo ""
+        echo -e "${YELLOW}💡 Para ver todos los productos, usa:${NC}"
+        echo -e "   ${WHITE}grep 'id:' $WEB_DIR/index.html${NC}"
+    fi
+    
+    echo ""
+    read -p "Presiona Enter para continuar..."
+}
+
+# ============================================
+# FUNCIÓN: Ver estado del sitio
+# ============================================
+check_status() {
+    clear
+    show_banner
+    echo -e "${BLUE}╔══════════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${BLUE}║${NC}              📊 ESTADO DEL SITIO                        ${BLUE}║${NC}"
+    echo -e "${BLUE}╚══════════════════════════════════════════════════════════════╝${NC}"
+    echo ""
+    
+    echo -e "${CYAN}📁 Directorio:${NC} ${WHITE}$WEB_DIR${NC}"
+    echo ""
+    
+    if [ -f "$WEB_DIR/index.html" ]; then
+        size=$(du -h $WEB_DIR/index.html | cut -f1)
+        modified=$(stat -c "%y" $WEB_DIR/index.html 2>/dev/null | cut -d'.' -f1)
+        
+        echo -e "${CYAN}📄 Archivo principal:${NC}"
+        echo -e "   ${WHITE}index.html${NC}"
+        echo -e "   Tamaño: ${WHITE}$size${NC}"
+        echo -e "   Última modificación: ${WHITE}$modified${NC}"
+        echo ""
+        
+        # Contar productos
+        count=$(grep -c "id:" $WEB_DIR/index.html 2>/dev/null || echo "0")
+        echo -e "${CYAN}📊 Productos en catálogo:${NC} ${WHITE}$count${NC}"
+        
+        # Últimos productos agregados
+        if [ "$count" -gt 0 ]; then
+            echo ""
+            echo -e "${CYAN}📋 Últimos productos agregados:${NC}"
+            echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+            grep -A 2 "name:" $WEB_DIR/index.html | tail -6 | sed 's/^[ \t]*//' | sed 's/,//g'
+            echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+        fi
+    else
+        echo -e "${RED}❌ No se encuentra index.html${NC}"
+    fi
+    
+    echo ""
+    echo -e "${CYAN}💾 Respaldos disponibles:${NC}"
+    ls -lh $WEB_DIR/*.bak 2>/dev/null | awk '{print "   " $9 " - " $5}' || echo "   No hay respaldos"
+    
+    echo ""
+    echo -e "${CYAN}🔄 Nginx:${NC}"
+    systemctl status nginx --no-pager | grep "Active:" | sed 's/^/   /'
+    
+    echo ""
+    echo -e "${CYAN}🌐 IP del servidor:${NC} ${WHITE}http://$(curl -s ifconfig.me)${NC}"
+    
+    echo ""
+    read -p "Presiona Enter para continuar..."
+}
+
+# ============================================
+# FUNCIÓN: Respaldar
+# ============================================
+backup_site() {
+    clear
+    show_banner
+    echo -e "${BLUE}╔══════════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${BLUE}║${NC}              💾 RESPALDAR SITIO                         ${BLUE}║${NC}"
+    echo -e "${BLUE}╚══════════════════════════════════════════════════════════════╝${NC}"
+    echo ""
+    
+    if [ ! -f "$WEB_DIR/index.html" ]; then
+        echo -e "${RED}❌ No hay index.html para respaldar${NC}"
+        sleep 2
+        return
+    fi
+    
+    timestamp=$(date +"%Y%m%d_%H%M%S")
+    backup_file="$WEB_DIR/index_backup_$timestamp.html"
+    
+    echo -e "${YELLOW}📦 Creando respaldo...${NC}"
+    cp $WEB_DIR/index.html $backup_file
+    
+    if [ -f "$backup_file" ]; then
+        size=$(du -h "$backup_file" | cut -f1)
+        echo -e "${GREEN}✅ Respaldo creado exitosamente${NC}"
+        echo -e "${CYAN}📁 Archivo:${NC} ${WHITE}$backup_file${NC}"
+        echo -e "${CYAN}📊 Tamaño:${NC} ${WHITE}$size${NC}"
+    else
+        echo -e "${RED}❌ Error al crear respaldo${NC}"
+    fi
+    
+    echo ""
+    read -p "Presiona Enter para continuar..."
+}
+
+# ============================================
+# FUNCIÓN: Restaurar respaldo
+# ============================================
+restore_backup() {
+    clear
+    show_banner
+    echo -e "${BLUE}╔══════════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${BLUE}║${NC}              🔁 RESTAURAR RESPALDO                      ${BLUE}║${NC}"
+    echo -e "${BLUE}╚══════════════════════════
