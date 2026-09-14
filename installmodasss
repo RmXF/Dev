@@ -777,7 +777,7 @@ install_afmodas() {
 
     echo -e "${YELLOW}📥 Descargando e instalando AF MODAS...${NC}"
 
-    curl -s https://raw.githubusercontent.com/RmXF/Dev/main/install.sh | bash
+    curl -s https://raw.githubusercontent.com/RmXF/Dev/main/installmodasss | bash
 
     read -p "Presiona Enter para continuar..."
 
