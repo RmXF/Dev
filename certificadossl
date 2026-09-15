@@ -1,0 +1,448 @@
+#!/bin/bash
+
+# ============================================================
+# INSTALADOR SSL - AF MODAS
+# Dominio: afmodas.online
+# Servidor: Apache 2.x / Ubuntu
+#
+# Archivos requeridos:
+#   /root/afmodas.online.crt
+#   /root/afmodas.online.key
+#
+# El script:
+#   - Verifica Apache
+#   - Verifica CRT y KEY
+#   - Comprueba que CRT y KEY coinciden
+#   - Instala el certificado
+#   - Activa SSL
+#   - Configura HTTPS
+#   - Configura redirección HTTP -> HTTPS
+#   - Hace backup antes de modificar
+#   - Valida Apache antes de reiniciar
+# ============================================================
+
+set -u
+
+DOMAIN="afmodas.online"
+WWW_DOMAIN="www.afmodas.online"
+
+CRT_SOURCE="/root/${DOMAIN}.crt"
+KEY_SOURCE="/root/${DOMAIN}.key"
+
+CRT_DEST="/etc/ssl/certs/${DOMAIN}.crt"
+KEY_DEST="/etc/ssl/private/${DOMAIN}.key"
+
+SSL_VHOST="/etc/apache2/sites-available/${DOMAIN}-ssl.conf"
+HTTP_VHOST="/etc/apache2/sites-available/${DOMAIN}.conf"
+
+BACKUP_DIR="/root/apache-backup-${DOMAIN}-$(date +%Y%m%d-%H%M%S)"
+
+TOTAL_STEPS=13
+STEP=0
+
+# ============================================================
+# COLORES
+# ============================================================
+
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+CYAN='\033[0;36m'
+NC='\033[0m'
+
+# ============================================================
+# FUNCIONES
+# ============================================================
+
+step() {
+    STEP=$((STEP + 1))
+    echo
+    echo -e "${CYAN}============================================================${NC}"
+    echo -e "${CYAN}[${STEP}/${TOTAL_STEPS}] $1${NC}"
+    echo -e "${CYAN}============================================================${NC}"
+}
+
+ok() {
+    echo -e "${GREEN}[OK]${NC} $1"
+}
+
+warn() {
+    echo -e "${YELLOW}[AVISO]${NC} $1"
+}
+
+error_exit() {
+    echo
+    echo -e "${RED}[ERROR]${NC} $1"
+    echo
+    echo "El script se detuvo para evitar daños."
+    exit 1
+}
+
+command_exists() {
+    command -v "$1" >/dev/null 2>&1
+}
+
+# ============================================================
+# 1. ROOT
+# ============================================================
+
+step "Comprobando permisos de administrador"
+
+if [ "$(id -u)" -ne 0 ]; then
+    error_exit "Debes ejecutar este script como root."
+fi
+
+ok "Ejecutando como root."
+
+# ============================================================
+# 2. APACHE
+# ============================================================
+
+step "Comprobando Apache"
+
+if ! command_exists apache2; then
+    error_exit "Apache2 no está instalado."
+fi
+
+APACHE_VERSION=$(apache2 -v | head -n 1)
+
+ok "Apache detectado:"
+echo "$APACHE_VERSION"
+
+# ============================================================
+# 3. ARCHIVOS SSL
+# ============================================================
+
+step "Comprobando certificado y clave privada"
+
+if [ ! -f "$CRT_SOURCE" ]; then
+    error_exit "No existe el certificado:
+$CRT_SOURCE"
+fi
+
+if [ ! -f "$KEY_SOURCE" ]; then
+    error_exit "No existe la clave privada:
+$KEY_SOURCE"
+fi
+
+ok "Certificado encontrado:"
+echo "  $CRT_SOURCE"
+
+ok "Clave privada encontrada:"
+echo "  $KEY_SOURCE"
+
+# ============================================================
+# 4. VALIDAR CRT
+# ============================================================
+
+step "Validando certificado CRT"
+
+if ! openssl x509 -in "$CRT_SOURCE" -noout >/dev/null 2>&1; then
+    error_exit "El archivo CRT no parece ser un certificado válido."
+fi
+
+SUBJECT=$(openssl x509 -in "$CRT_SOURCE" -noout -subject 2>/dev/null)
+ISSUER=$(openssl x509 -in "$CRT_SOURCE" -noout -issuer 2>/dev/null)
+NOT_BEFORE=$(openssl x509 -in "$CRT_SOURCE" -noout -startdate 2>/dev/null)
+NOT_AFTER=$(openssl x509 -in "$CRT_SOURCE" -noout -enddate 2>/dev/null)
+
+echo
+echo "Certificado:"
+echo "  $SUBJECT"
+echo "  $ISSUER"
+echo "  $NOT_BEFORE"
+echo "  $NOT_AFTER"
+
+ok "Certificado CRT válido."
+
+# ============================================================
+# 5. VALIDAR KEY
+# ============================================================
+
+step "Validando clave privada"
+
+KEY_TYPE_OK=0
+
+if openssl rsa -in "$KEY_SOURCE" -check -noout >/dev/null 2>&1; then
+    KEY_TYPE_OK=1
+elif openssl ec -in "$KEY_SOURCE" -check -noout >/dev/null 2>&1; then
+    KEY_TYPE_OK=1
+fi
+
+if [ "$KEY_TYPE_OK" -ne 1 ]; then
+    error_exit "La clave privada no pudo ser validada."
+fi
+
+ok "Clave privada válida."
+
+# ============================================================
+# 6. COMPROBAR QUE CRT Y KEY COINCIDEN
+# ============================================================
+
+step "Comprobando que el CRT y la KEY corresponden"
+
+CRT_HASH=$(openssl x509 -noout -modulus -in "$CRT_SOURCE" 2>/dev/null | openssl sha256 2>/dev/null | awk '{print $2}')
+
+KEY_HASH=""
+
+if openssl rsa -in "$KEY_SOURCE" -noout -modulus >/dev/null 2>&1; then
+    KEY_HASH=$(openssl rsa -noout -modulus -in "$KEY_SOURCE" 2>/dev/null | openssl sha256 2>/dev/null | awk '{print $2}')
+else
+    CRT_PUB=$(openssl x509 -in "$CRT_SOURCE" -pubkey -noout 2>/dev/null | openssl sha256 2>/dev/null | awk '{print $2}')
+    KEY_PUB=$(openssl pkey -in "$KEY_SOURCE" -pubout 2>/dev/null | openssl sha256 2>/dev/null | awk '{print $2}')
+
+    if [ "$CRT_PUB" != "$KEY_PUB" ]; then
+        error_exit "El certificado y la clave privada NO corresponden."
+    fi
+
+    KEY_HASH="$KEY_PUB"
+fi
+
+if [ -n "$CRT_HASH" ] && [ -n "$KEY_HASH" ]; then
+
+    if [ "$CRT_HASH" != "$KEY_HASH" ]; then
+        error_exit "El certificado CRT y la clave KEY NO coinciden."
+    fi
+
+fi
+
+ok "CRT y KEY corresponden correctamente."
+
+# ============================================================
+# 7. BACKUP
+# ============================================================
+
+step "Creando backup de Apache"
+
+mkdir -p "$BACKUP_DIR"
+
+if [ -f "/etc/apache2/sites-available/000-default.conf" ]; then
+    cp -a "/etc/apache2/sites-available/000-default.conf" "$BACKUP_DIR/"
+fi
+
+if [ -f "$SSL_VHOST" ]; then
+    cp -a "$SSL_VHOST" "$BACKUP_DIR/"
+fi
+
+if [ -f "$HTTP_VHOST" ]; then
+    cp -a "$HTTP_VHOST" "$BACKUP_DIR/"
+fi
+
+ok "Backup creado en:"
+echo "$BACKUP_DIR"
+
+# ============================================================
+# 8. INSTALAR CERTIFICADOS
+# ============================================================
+
+step "Instalando certificado y clave privada"
+
+cp -f "$CRT_SOURCE" "$CRT_DEST" || \
+    error_exit "No se pudo copiar el certificado."
+
+cp -f "$KEY_SOURCE" "$KEY_DEST" || \
+    error_exit "No se pudo copiar la clave privada."
+
+chown root:root "$CRT_DEST"
+chown root:root "$KEY_DEST"
+
+chmod 644 "$CRT_DEST"
+chmod 600 "$KEY_DEST"
+
+ok "Certificado instalado:"
+echo "  $CRT_DEST"
+
+ok "Clave privada instalada:"
+echo "  $KEY_DEST"
+
+# ============================================================
+# 9. ACTIVAR MÓDULOS
+# ============================================================
+
+step "Activando módulos necesarios de Apache"
+
+a2enmod ssl >/dev/null 2>&1 || true
+a2enmod headers >/dev/null 2>&1 || true
+a2enmod rewrite >/dev/null 2>&1 || true
+
+ok "SSL habilitado."
+ok "Headers habilitado."
+ok "Rewrite habilitado."
+
+# ============================================================
+# 10. CREAR VIRTUALHOST HTTPS
+# ============================================================
+
+step "Creando VirtualHost HTTPS"
+
+cat > "$SSL_VHOST" <<EOF
+<VirtualHost *:443>
+
+    ServerName ${DOMAIN}
+    ServerAlias ${WWW_DOMAIN}
+
+    DocumentRoot /var/www/html
+
+    SSLEngine on
+
+    SSLCertificateFile ${CRT_DEST}
+    SSLCertificateKeyFile ${KEY_DEST}
+
+    <Directory /var/www/html>
+        Options FollowSymLinks
+        AllowOverride All
+        Require all granted
+    </Directory>
+
+    ErrorLog \${APACHE_LOG_DIR}/${DOMAIN}-ssl-error.log
+    CustomLog \${APACHE_LOG_DIR}/${DOMAIN}-ssl-access.log combined
+
+</VirtualHost>
+EOF
+
+ok "VirtualHost HTTPS creado."
+
+# ============================================================
+# 11. CREAR VIRTUALHOST HTTP CON REDIRECCIÓN
+# ============================================================
+
+step "Configurando redirección HTTP -> HTTPS"
+
+cat > "$HTTP_VHOST" <<EOF
+<VirtualHost *:80>
+
+    ServerName ${DOMAIN}
+    ServerAlias ${WWW_DOMAIN}
+
+    RewriteEngine On
+    RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [END,NE,R=301]
+
+</VirtualHost>
+EOF
+
+ok "Redirección HTTP -> HTTPS creada."
+
+# ============================================================
+# 12. ACTIVAR SITIOS
+# ============================================================
+
+step "Activando configuración SSL"
+
+a2ensite "${DOMAIN}-ssl.conf" >/dev/null 2>&1 || \
+    error_exit "No se pudo activar el VirtualHost SSL."
+
+a2ensite "${DOMAIN}.conf" >/dev/null 2>&1 || \
+    error_exit "No se pudo activar el VirtualHost HTTP."
+
+ok "VirtualHost HTTPS activado."
+ok "Redirección HTTP activada."
+
+# ============================================================
+# 13. VALIDAR Y REINICIAR
+# ============================================================
+
+step "Validando configuración de Apache"
+
+CONFIG_TEST=$(apache2ctl configtest 2>&1)
+
+echo "$CONFIG_TEST"
+
+if ! echo "$CONFIG_TEST" | grep -q "Syntax OK"; then
+
+    echo
+    warn "La configuración de Apache tiene un error."
+    warn "Se intentará restaurar la configuración creada por este script."
+
+    rm -f "$SSL_VHOST"
+    rm -f "$HTTP_VHOST"
+
+    if [ -f "$BACKUP_DIR/000-default.conf" ]; then
+        cp -a "$BACKUP_DIR/000-default.conf" \
+            /etc/apache2/sites-available/000-default.conf
+    fi
+
+    a2dissite "${DOMAIN}-ssl.conf" >/dev/null 2>&1 || true
+    a2dissite "${DOMAIN}.conf" >/dev/null 2>&1 || true
+
+    error_exit "Apache NO fue reiniciado porque configtest falló."
+fi
+
+ok "Apache reportó Syntax OK."
+
+echo
+echo "Reiniciando Apache..."
+
+if ! systemctl restart apache2; then
+    warn "Apache no pudo reiniciarse."
+    echo
+    echo "Estado actual:"
+    systemctl status apache2 --no-pager
+    echo
+    error_exit "Revisa el estado de Apache y los logs."
+fi
+
+ok "Apache reiniciado correctamente."
+
+# ============================================================
+# COMPROBACIONES FINALES
+# ============================================================
+
+echo
+echo -e "${GREEN}============================================================${NC}"
+echo -e "${GREEN}             INSTALACIÓN COMPLETADA${NC}"
+echo -e "${GREEN}============================================================${NC}"
+
+echo
+echo "Dominio:"
+echo "  https://${DOMAIN}"
+
+echo
+echo "WWW:"
+echo "  https://${WWW_DOMAIN}"
+
+echo
+echo "Certificado:"
+echo "  ${CRT_DEST}"
+
+echo
+echo "Clave privada:"
+echo "  ${KEY_DEST}"
+
+echo
+echo "DocumentRoot:"
+echo "  /var/www/html"
+
+echo
+echo "Backup:"
+echo "  ${BACKUP_DIR}"
+
+echo
+echo "Comprobando puerto HTTPS..."
+
+if ss -lntp 2>/dev/null | grep -q ':443'; then
+    ok "Apache está escuchando en el puerto 443."
+else
+    warn "No se detectó el puerto 443."
+fi
+
+echo
+echo "VirtualHosts actuales:"
+echo
+
+apache2ctl -S 2>&1
+
+echo
+echo -e "${GREEN}============================================================${NC}"
+echo -e "${GREEN} HTTPS CONFIGURADO PARA ${DOMAIN}${NC}"
+echo -e "${GREEN}============================================================${NC}"
+echo
+echo "Prueba en tu navegador:"
+echo
+echo "  https://${DOMAIN}"
+echo
+echo "También puedes probar:"
+echo
+echo "  http://${DOMAIN}"
+echo
+echo "El segundo debería redirigir automáticamente a HTTPS."
+echo
