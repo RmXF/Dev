@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# CEOSSH 2.0.2 — instalador completo para VPS Debian/Ubuntu.
+# CEOSSH 2.0.3 — instalador completo para VPS Debian/Ubuntu.
 # Panel: https://github.com/RmXF/Dev/blob/main/CEOSSH_2.0_completo.zip
 # Incluye actualizador, diagnóstico y comando ceo, en este único archivo.
 set -Eeuo pipefail
@@ -14,7 +14,7 @@ while [[ $# -gt 0 ]];do
   --install|--update|--auto|--check) MODE=$1;shift ;;
   --zip) [[ $# -ge 2 ]] || { echo 'Falta la ruta después de --zip';exit 1; };LOCAL_ZIP=$2;shift 2 ;;
   --help)
-   printf '%s\n' 'CEOSSH 2.0.2 — Instalación desde GitHub' \
+   printf '%s\n' 'CEOSSH 2.0.3 — Instalación desde GitHub' \
     'sudo bash install_ceossh.sh --install       VPS limpia' \
     'sudo bash install_ceossh.sh --update        Respaldo y actualización' \
     'bash install_ceossh.sh --check              Descargar/verificar sin instalar' \
@@ -66,7 +66,7 @@ PYCLEAN
 }
 trap cleanup EXIT
 trap 'result=$?;log ERROR "Instalador detenido en línea $LINENO (código $result). Revisá el mensaje anterior y /var/log/ceossh-install.log.";exit "$result"' ERR
-log INFO 'CEOSSH 2.0.2 — descarga verificada y despliegue completo'
+log INFO 'CEOSSH 2.0.3 — descarga verificada y despliegue completo'
 if [[ "$MODE" != --check ]];then
  if ! command -v python3 >/dev/null || ! command -v curl >/dev/null || [[ ! -f /etc/ssl/certs/ca-certificates.crt ]];then
   log INFO 'Preparando herramientas de descarga'
@@ -150,7 +150,7 @@ if (PHP_SAPI !== 'cli') {
 CEOSSH_FILE_1_END
 cat > "$PACKAGE/install.sh" <<'CEOSSH_FILE_2_END'
 #!/usr/bin/env bash
-# CEOSSH 2.0.2 — instalador del paquete. No descarga ni genera clases antiguas.
+# CEOSSH 2.0.3 — instalador del paquete. No descarga ni genera clases antiguas.
 set -Eeuo pipefail
 umask 027
 SOURCE=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
@@ -182,19 +182,52 @@ HAS_COLOR=0;[[ -t 1 ]] && HAS_COLOR=1
 LOG=/var/log/ceossh-install.log
 touch "$LOG";chmod 0600 "$LOG"
 exec > >(tee -a "$LOG") 2>&1
-log() { local level=$1;shift;local color='';if [[ "$HAS_COLOR" == 1 ]];then case "$level" in OK) color=$'\033[32m';;ERROR) color=$'\033[31m';;*) color=$'\033[36m';;esac;fi;local reset='';[[ -n "$color" ]] && reset=$'\033[0m';printf '%s[%s] [%s] %s%s\n' "$color" "$(date +%H:%M:%S)" "$level" "$*" "$reset"; }
+log() { local level=$1;shift;local color='';if [[ "$HAS_COLOR" == 1 ]];then case "$level" in OK) color=$'\033[32m';;ERROR) color=$'\033[31m';;WARN) color=$'\033[33m';;*) color=$'\033[36m';;esac;fi;local reset='';[[ -n "$color" ]] && reset=$'\033[0m';printf '%s[%s] [%s] %s%s\n' "$color" "$(date +%H:%M:%S)" "$level" "$*" "$reset"; }
+ask_admin() {
+ # LC_ALL=C hace que la longitud en Bash coincida con strlen() de PHP (bytes).
+ local LC_ALL=C confirmation password_bytes
+ log INFO 'Usuario: 3–64 letras A–Z, números o guion bajo. Contraseña: 12–128 bytes.'
+ while true;do
+  if ! IFS= read -r -p 'Administrador [admin]: ' CEOSSH_ADMIN_NAME;then
+   log ERROR 'Entrada interrumpida; no se creó el administrador';return 1
+  fi
+  CEOSSH_ADMIN_NAME=${CEOSSH_ADMIN_NAME:-admin}
+  if [[ "$CEOSSH_ADMIN_NAME" =~ ^[a-zA-Z0-9_]{3,64}$ ]];then break;fi
+  log WARN 'Usuario inválido: usá 3–64 letras, números o guion bajo, sin espacios ni acentos.'
+ done
+ while true;do
+  if ! IFS= read -r -s -p 'Contraseña administrador (12–128 bytes): ' CEOSSH_ADMIN_PASSWORD;then
+   printf '\n';unset CEOSSH_ADMIN_PASSWORD;log ERROR 'Entrada interrumpida';return 1
+  fi
+  printf '\n'
+  password_bytes=${#CEOSSH_ADMIN_PASSWORD}
+  if [[ "$password_bytes" -lt 12 || "$password_bytes" -gt 128 ]];then
+   unset CEOSSH_ADMIN_PASSWORD
+   log WARN 'La contraseña debe tener entre 12 y 128 bytes. Probá nuevamente.'
+   continue
+  fi
+  if ! IFS= read -r -s -p 'Repetir contraseña: ' confirmation;then
+   printf '\n';unset CEOSSH_ADMIN_PASSWORD confirmation;log ERROR 'Entrada interrumpida';return 1
+  fi
+  printf '\n'
+  if [[ "$CEOSSH_ADMIN_PASSWORD" != "$confirmation" ]];then
+   unset CEOSSH_ADMIN_PASSWORD confirmation
+   log WARN 'Las contraseñas no coinciden. Ingresalas nuevamente.'
+   continue
+  fi
+  unset confirmation
+  log OK 'Usuario y contraseña validados'
+  break
+ done
+}
 BACKUP=''
 trap 'code=$?;log ERROR "Proceso detenido en línea $LINENO (código $code). Respaldo: ${BACKUP:-todavía no creado}. Revisá $LOG. No se realizó una restauración automática.";exit "$code"' ERR
-log INFO "CEOSSH 2.0.2: $MODE — $PRETTY_NAME"
+log INFO "CEOSSH 2.0.3: $MODE — $PRETTY_NAME"
 if [[ "$MODE" == --update ]];then
  [[ -f "$TARGET/config/config.php" ]] || { log ERROR 'No existe configuración; usá --install';exit 1; }
 else
  [[ ! -e "$TARGET/config/config.php" && ! -e "$TARGET/app" ]] || { log ERROR 'Instalación existente/incompleta: revisala y usá --update';exit 1; }
- read -r -p 'Administrador [admin]: ' CEOSSH_ADMIN_NAME;CEOSSH_ADMIN_NAME=${CEOSSH_ADMIN_NAME:-admin}
- read -r -s -p 'Contraseña administrador (12–128 caracteres): ' CEOSSH_ADMIN_PASSWORD;printf '\n'
- read -r -s -p 'Repetir contraseña: ' CONFIRM;printf '\n'
- [[ "$CEOSSH_ADMIN_PASSWORD" == "$CONFIRM" && ${#CEOSSH_ADMIN_PASSWORD} -ge 12 && ${#CEOSSH_ADMIN_PASSWORD} -le 128 && "$CEOSSH_ADMIN_NAME" =~ ^[a-zA-Z0-9_]{3,64}$ ]] || { log ERROR 'Administrador o contraseña inválidos';exit 1; }
- unset CONFIRM
+ ask_admin
  read -r -p 'Puerto HTTP dedicado [8088]: ' PANEL_PORT;PANEL_PORT=${PANEL_PORT:-8088}
  [[ "$PANEL_PORT" =~ ^[0-9]{1,5}$ ]] || { log ERROR 'Puerto inválido';exit 1; }
  PANEL_PORT=$((10#$PANEL_PORT))
@@ -263,7 +296,7 @@ GRANT ALL PRIVILEGES ON \`$CEOSSH_DB_NAME\`.* TO '$CEOSSH_DB_USER'@'localhost';
 SQL
  CEOSSH_SERVER_IP=$(hostname -I | awk '{print $1}');CEOSSH_SERVER_IP=${CEOSSH_SERVER_IP:-127.0.0.1}
  export CEOSSH_DB_PASS CEOSSH_DB_NAME CEOSSH_DB_USER CEOSSH_SERVER_IP
- php -r '$c="<?php\n";foreach(["DB_HOST"=>"localhost","DB_NAME"=>getenv("CEOSSH_DB_NAME"),"DB_USER"=>getenv("CEOSSH_DB_USER"),"DB_PASS"=>getenv("CEOSSH_DB_PASS"),"APP_TIMEZONE"=>"America/Argentina/Buenos_Aires","LEGACY_DATA_TIMEZONE"=>"UTC","CEOSSH_VERSION"=>"2.0.2","SERVER_IP"=>getenv("CEOSSH_SERVER_IP")] as $k=>$v)$c.="define(".var_export($k,true).", ".var_export($v,true).");\n";file_put_contents("/opt/ceossh/config/config.php",$c);'
+ php -r '$c="<?php\n";foreach(["DB_HOST"=>"localhost","DB_NAME"=>getenv("CEOSSH_DB_NAME"),"DB_USER"=>getenv("CEOSSH_DB_USER"),"DB_PASS"=>getenv("CEOSSH_DB_PASS"),"APP_TIMEZONE"=>"America/Argentina/Buenos_Aires","LEGACY_DATA_TIMEZONE"=>"UTC","CEOSSH_VERSION"=>"2.0.3","SERVER_IP"=>getenv("CEOSSH_SERVER_IP")] as $k=>$v)$c.="define(".var_export($k,true).", ".var_export($v,true).");\n";file_put_contents("/opt/ceossh/config/config.php",$c);'
  unset CEOSSH_DB_PASS
 fi
 mkdir -p "$TARGET/storage/logs" "$TARGET/storage/tmp" "$TARGET/storage/cache" "$TARGET/config/ssh"
